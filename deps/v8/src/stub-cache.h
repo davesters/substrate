@@ -89,11 +89,9 @@ class StubCache {
   Handle<Code> FindHandler(Handle<Name> name,
                            Handle<Map> map,
                            Code::Kind kind,
-                           InlineCacheHolderFlag cache_holder,
-                           Code::StubType type);
+                           InlineCacheHolderFlag cache_holder = OWN_MAP);
 
-  Handle<Code> ComputeMonomorphicIC(Code::Kind kind,
-                                    Handle<Name> name,
+  Handle<Code> ComputeMonomorphicIC(Handle<Name> name,
                                     Handle<HeapType> type,
                                     Handle<Code> handler,
                                     ExtraICState extra_ic_state);
@@ -103,7 +101,7 @@ class StubCache {
   Handle<Code> ComputeKeyedLoadElement(Handle<Map> receiver_map);
 
   Handle<Code> ComputeKeyedStoreElement(Handle<Map> receiver_map,
-                                        StrictMode strict_mode,
+                                        StrictModeFlag strict_mode,
                                         KeyedAccessStoreMode store_mode);
 
   // ---
@@ -122,10 +120,9 @@ class StubCache {
   Handle<Code> ComputeLoadElementPolymorphic(MapHandleList* receiver_maps);
   Handle<Code> ComputeStoreElementPolymorphic(MapHandleList* receiver_maps,
                                               KeyedAccessStoreMode store_mode,
-                                              StrictMode strict_mode);
+                                              StrictModeFlag strict_mode);
 
-  Handle<Code> ComputePolymorphicIC(Code::Kind kind,
-                                    TypeHandleList* types,
+  Handle<Code> ComputePolymorphicIC(TypeHandleList* types,
                                     CodeHandleList* handlers,
                                     int number_of_valid_maps,
                                     Handle<Name> name,
@@ -407,15 +404,6 @@ class StubCompiler BASE_EMBEDDED {
 
   void GenerateBooleanCheck(Register object, Label* miss);
 
-  static void GenerateFastApiCall(MacroAssembler* masm,
-                                  const CallOptimization& optimization,
-                                  Handle<Map> receiver_map,
-                                  Register receiver,
-                                  Register scratch,
-                                  bool is_store,
-                                  int argc,
-                                  Register* values);
-
  protected:
   Handle<Code> GetCodeWithFlags(Code::Flags flags, const char* name);
   Handle<Code> GetCodeWithFlags(Code::Flags flags, Handle<Name> name);
@@ -522,11 +510,11 @@ class BaseLoadStoreStubCompiler: public StubCompiler {
   }
   void JitEvent(Handle<Name> name, Handle<Code> code);
 
-  Register receiver() { return registers_[0]; }
-  Register name()     { return registers_[1]; }
-  Register scratch1() { return registers_[2]; }
-  Register scratch2() { return registers_[3]; }
-  Register scratch3() { return registers_[4]; }
+  virtual Register receiver() = 0;
+  virtual Register name() = 0;
+  virtual Register scratch1() = 0;
+  virtual Register scratch2() = 0;
+  virtual Register scratch3() = 0;
 
   void InitializeRegisters();
 
@@ -583,11 +571,6 @@ class LoadStubCompiler: public BaseLoadStoreStubCompiler {
                                     Register receiver,
                                     Handle<JSFunction> getter);
 
-  static void GenerateLoadViaGetterForDeopt(MacroAssembler* masm) {
-    GenerateLoadViaGetter(
-        masm, Handle<HeapType>::null(), no_reg, Handle<JSFunction>());
-  }
-
   Handle<Code> CompileLoadNonexistent(Handle<HeapType> type,
                                       Handle<JSObject> last,
                                       Handle<Name> name);
@@ -597,6 +580,8 @@ class LoadStubCompiler: public BaseLoadStoreStubCompiler {
                                  Handle<PropertyCell> cell,
                                  Handle<Name> name,
                                  bool is_dont_delete);
+
+  static Register* registers();
 
  protected:
   ContextualMode contextual_mode() {
@@ -639,10 +624,12 @@ class LoadStubCompiler: public BaseLoadStoreStubCompiler {
                                    Handle<Name> name,
                                    LookupResult* lookup);
 
- private:
-  static Register* registers();
+  virtual Register receiver() { return registers_[0]; }
+  virtual Register name()     { return registers_[1]; }
+  virtual Register scratch1() { return registers_[2]; }
+  virtual Register scratch2() { return registers_[3]; }
+  virtual Register scratch3() { return registers_[4]; }
   Register scratch4() { return registers_[5]; }
-  friend class BaseLoadStoreStubCompiler;
 };
 
 
@@ -727,13 +714,7 @@ class StoreStubCompiler: public BaseLoadStoreStubCompiler {
 
   static void GenerateStoreViaSetter(MacroAssembler* masm,
                                      Handle<HeapType> type,
-                                     Register receiver,
                                      Handle<JSFunction> setter);
-
-  static void GenerateStoreViaSetterForDeopt(MacroAssembler* masm) {
-    GenerateStoreViaSetter(
-        masm, Handle<HeapType>::null(), no_reg, Handle<JSFunction>());
-  }
 
   Handle<Code> CompileStoreViaSetter(Handle<JSObject> object,
                                      Handle<JSObject> holder,
@@ -764,9 +745,17 @@ class StoreStubCompiler: public BaseLoadStoreStubCompiler {
                            Label* label,
                            Handle<Name> name);
 
- private:
+  virtual Register receiver() { return registers_[0]; }
+  virtual Register name()     { return registers_[1]; }
+  Register value()    { return registers_[2]; }
+  virtual Register scratch1() { return registers_[3]; }
+  virtual Register scratch2() { return registers_[4]; }
+  virtual Register scratch3() { return registers_[5]; }
+
+ protected:
   static Register* registers();
-  static Register value();
+
+ private:
   friend class BaseLoadStoreStubCompiler;
 };
 
@@ -794,7 +783,9 @@ class KeyedStoreStubCompiler: public StoreStubCompiler {
     return KeyedStoreIC::GetKeyedAccessStoreMode(extra_state());
   }
 
-  Register transition_map() { return scratch1(); }
+  Register transition_map() {
+    return registers()[3];
+  }
 
   friend class BaseLoadStoreStubCompiler;
 };

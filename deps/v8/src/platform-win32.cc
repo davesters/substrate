@@ -251,8 +251,6 @@ class Win32Time {
   // timestamp taking into account daylight saving.
   char* LocalTimezone();
 
-  static void TimeZoneChanged() { tz_initialized_ = false; }
-
  private:
   // Constants for time conversion.
   static const int64_t kTimeEpoc = 116444736000000000LL;
@@ -613,11 +611,6 @@ double OS::DaylightSavingsOffset(double time) {
 }
 
 
-void OS::TimeZoneChanged() {
-  Win32Time::TimeZoneChanged();
-}
-
-
 int OS::GetLastError() {
   return ::GetLastError();
 }
@@ -669,15 +662,15 @@ static bool HasConsole() {
 
 
 static void VPrintHelper(FILE* stream, const char* format, va_list args) {
-  if ((stream == stdout || stream == stderr) && !HasConsole()) {
+  if (HasConsole()) {
+    vfprintf(stream, format, args);
+  } else {
     // It is important to use safe print here in order to avoid
     // overflowing the buffer. We might truncate the output, but this
     // does not crash.
     EmbeddedVector<char, 4096> buffer;
     OS::VSNPrintF(buffer, format, args);
     OutputDebugStringA(buffer.start());
-  } else {
-    vfprintf(stream, format, args);
   }
 }
 
@@ -930,11 +923,12 @@ void OS::Sleep(int milliseconds) {
 
 
 void OS::Abort() {
-  if (FLAG_hard_abort) {
-    V8_IMMEDIATE_CRASH();
+  if (IsDebuggerPresent() || FLAG_break_on_abort) {
+    DebugBreak();
+  } else {
+    // Make the MSVCRT do a silent abort.
+    raise(SIGABRT);
   }
-  // Make the MSVCRT do a silent abort.
-  raise(SIGABRT);
 }
 
 

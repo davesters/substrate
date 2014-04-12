@@ -320,7 +320,8 @@ class LoadIC: public IC {
     GenerateMiss(masm);
   }
   static void GenerateMiss(MacroAssembler* masm);
-  static void GenerateMegamorphic(MacroAssembler* masm);
+  static void GenerateMegamorphic(MacroAssembler* masm,
+                                  ExtraICState extra_state);
   static void GenerateNormal(MacroAssembler* masm);
   static void GenerateRuntimeGetProperty(MacroAssembler* masm);
 
@@ -399,7 +400,7 @@ class KeyedLoadIC: public LoadIC {
   static void GenerateGeneric(MacroAssembler* masm);
   static void GenerateString(MacroAssembler* masm);
   static void GenerateIndexedInterceptor(MacroAssembler* masm);
-  static void GenerateSloppyArguments(MacroAssembler* masm);
+  static void GenerateNonStrictArguments(MacroAssembler* masm);
 
   // Bit mask to be tested against bit field for the cases when
   // generic stub should go into slow case.
@@ -436,8 +437,8 @@ class KeyedLoadIC: public LoadIC {
   Handle<Code> indexed_interceptor_stub() {
     return isolate()->builtins()->KeyedLoadIC_IndexedInterceptor();
   }
-  Handle<Code> sloppy_arguments_stub() {
-    return isolate()->builtins()->KeyedLoadIC_SloppyArguments();
+  Handle<Code> non_strict_arguments_stub() {
+    return isolate()->builtins()->KeyedLoadIC_NonStrictArguments();
   }
   Handle<Code> string_stub() {
     return isolate()->builtins()->KeyedLoadIC_String();
@@ -451,11 +452,12 @@ class KeyedLoadIC: public LoadIC {
 
 class StoreIC: public IC {
  public:
-  class StrictModeState: public BitField<StrictMode, 1, 1> {};
-  static ExtraICState ComputeExtraICState(StrictMode flag) {
+  class StrictModeState: public BitField<StrictModeFlag, 1, 1> {};
+  static ExtraICState ComputeExtraICState(StrictModeFlag flag) {
     return StrictModeState::encode(flag);
   }
-  static StrictMode GetStrictMode(ExtraICState state) {
+
+  static StrictModeFlag GetStrictMode(ExtraICState state) {
     return StrictModeState::decode(state);
   }
 
@@ -469,7 +471,7 @@ class StoreIC: public IC {
     ASSERT(IsStoreStub());
   }
 
-  StrictMode strict_mode() const {
+  StrictModeFlag strict_mode() const {
     return StrictModeState::decode(extra_ic_state());
   }
 
@@ -480,13 +482,14 @@ class StoreIC: public IC {
     GenerateMiss(masm);
   }
   static void GenerateMiss(MacroAssembler* masm);
-  static void GenerateMegamorphic(MacroAssembler* masm);
+  static void GenerateMegamorphic(MacroAssembler* masm,
+                                  ExtraICState extra_ic_state);
   static void GenerateNormal(MacroAssembler* masm);
   static void GenerateRuntimeSetProperty(MacroAssembler* masm,
-                                         StrictMode strict_mode);
+                                         StrictModeFlag strict_mode);
 
   static Handle<Code> initialize_stub(Isolate* isolate,
-                                      StrictMode strict_mode);
+                                      StrictModeFlag strict_mode);
 
   MUST_USE_RESULT MaybeObject* Store(
       Handle<Object> object,
@@ -511,7 +514,7 @@ class StoreIC: public IC {
   }
 
   static Handle<Code> pre_monomorphic_stub(Isolate* isolate,
-                                           StrictMode strict_mode);
+                                           StrictModeFlag strict_mode);
 
   // Update the inline cache and the global stub cache based on the
   // lookup result.
@@ -558,7 +561,7 @@ class KeyedStoreIC: public StoreIC {
   class ExtraICStateKeyedAccessStoreMode:
       public BitField<KeyedAccessStoreMode, 2, 4> {};  // NOLINT
 
-  static ExtraICState ComputeExtraICState(StrictMode flag,
+  static ExtraICState ComputeExtraICState(StrictModeFlag flag,
                                           KeyedAccessStoreMode mode) {
     return StrictModeState::encode(flag) |
         ExtraICStateKeyedAccessStoreMode::encode(mode);
@@ -586,9 +589,9 @@ class KeyedStoreIC: public StoreIC {
   static void GenerateMiss(MacroAssembler* masm);
   static void GenerateSlow(MacroAssembler* masm);
   static void GenerateRuntimeSetProperty(MacroAssembler* masm,
-                                         StrictMode strict_mode);
-  static void GenerateGeneric(MacroAssembler* masm, StrictMode strict_mode);
-  static void GenerateSloppyArguments(MacroAssembler* masm);
+                                         StrictModeFlag strict_mode);
+  static void GenerateGeneric(MacroAssembler* masm, StrictModeFlag strict_mode);
+  static void GenerateNonStrictArguments(MacroAssembler* masm);
 
  protected:
   virtual Code::Kind kind() const { return Code::KEYED_STORE_IC; }
@@ -599,8 +602,8 @@ class KeyedStoreIC: public StoreIC {
     return pre_monomorphic_stub(isolate(), strict_mode());
   }
   static Handle<Code> pre_monomorphic_stub(Isolate* isolate,
-                                           StrictMode strict_mode) {
-    if (strict_mode == STRICT) {
+                                           StrictModeFlag strict_mode) {
+    if (strict_mode == kStrictMode) {
       return isolate->builtins()->KeyedStoreIC_PreMonomorphic_Strict();
     } else {
       return isolate->builtins()->KeyedStoreIC_PreMonomorphic();
@@ -610,7 +613,7 @@ class KeyedStoreIC: public StoreIC {
     return isolate()->builtins()->KeyedStoreIC_Slow();
   }
   virtual Handle<Code> megamorphic_stub() {
-    if (strict_mode() == STRICT) {
+    if (strict_mode() == kStrictMode) {
       return isolate()->builtins()->KeyedStoreIC_Generic_Strict();
     } else {
       return isolate()->builtins()->KeyedStoreIC_Generic();
@@ -629,15 +632,15 @@ class KeyedStoreIC: public StoreIC {
 
   // Stub accessors.
   virtual Handle<Code> generic_stub() const {
-    if (strict_mode() == STRICT) {
+    if (strict_mode() == kStrictMode) {
       return isolate()->builtins()->KeyedStoreIC_Generic_Strict();
     } else {
       return isolate()->builtins()->KeyedStoreIC_Generic();
     }
   }
 
-  Handle<Code> sloppy_arguments_stub() {
-    return isolate()->builtins()->KeyedStoreIC_SloppyArguments();
+  Handle<Code> non_strict_arguments_stub() {
+    return isolate()->builtins()->KeyedStoreIC_NonStrictArguments();
   }
 
   static void Clear(Isolate* isolate, Address address, Code* target);

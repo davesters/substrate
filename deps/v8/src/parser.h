@@ -39,6 +39,7 @@ namespace v8 {
 namespace internal {
 
 class CompilationInfo;
+class FuncNameInferrer;
 class ParserLog;
 class PositionStack;
 class Target;
@@ -53,7 +54,7 @@ class FunctionEntry BASE_EMBEDDED {
     kEndPositionIndex,
     kLiteralCountIndex,
     kPropertyCountIndex,
-    kStrictModeIndex,
+    kLanguageModeIndex,
     kSize
   };
 
@@ -66,10 +67,11 @@ class FunctionEntry BASE_EMBEDDED {
   int end_pos() { return backing_[kEndPositionIndex]; }
   int literal_count() { return backing_[kLiteralCountIndex]; }
   int property_count() { return backing_[kPropertyCountIndex]; }
-  StrictMode strict_mode() {
-    ASSERT(backing_[kStrictModeIndex] == SLOPPY ||
-           backing_[kStrictModeIndex] == STRICT);
-    return static_cast<StrictMode>(backing_[kStrictModeIndex]);
+  LanguageMode language_mode() {
+    ASSERT(backing_[kLanguageModeIndex] == CLASSIC_MODE ||
+           backing_[kLanguageModeIndex] == STRICT_MODE ||
+           backing_[kLanguageModeIndex] == EXTENDED_MODE);
+    return static_cast<LanguageMode>(backing_[kLanguageModeIndex]);
   }
 
   bool is_valid() { return !backing_.is_empty(); }
@@ -402,140 +404,10 @@ class RegExpParser BASE_EMBEDDED {
 // ----------------------------------------------------------------------------
 // JAVASCRIPT PARSING
 
-class Parser;
+// Forward declaration.
 class SingletonLogger;
 
-class ParserTraits {
- public:
-  struct Type {
-    typedef v8::internal::Parser* Parser;
-
-    // Types used by FunctionState and BlockState.
-    typedef v8::internal::Scope Scope;
-    typedef AstNodeFactory<AstConstructionVisitor> Factory;
-    typedef Variable GeneratorVariable;
-    typedef v8::internal::Zone Zone;
-
-    // Return types for traversing functions.
-    typedef Handle<String> Identifier;
-    typedef v8::internal::Expression* Expression;
-    typedef v8::internal::FunctionLiteral* FunctionLiteral;
-    typedef v8::internal::Literal* Literal;
-    typedef ObjectLiteral::Property* ObjectLiteralProperty;
-    typedef ZoneList<v8::internal::Expression*>* ExpressionList;
-    typedef ZoneList<ObjectLiteral::Property*>* PropertyList;
-  };
-
-  explicit ParserTraits(Parser* parser) : parser_(parser) {}
-
-  // Custom operations executed when FunctionStates are created and destructed.
-  template<typename FunctionState>
-  static void SetUpFunctionState(FunctionState* function_state, Zone* zone) {
-    Isolate* isolate = zone->isolate();
-    function_state->isolate_ = isolate;
-    function_state->saved_ast_node_id_ = isolate->ast_node_id();
-    isolate->set_ast_node_id(BailoutId::FirstUsable().ToInt());
-  }
-
-  template<typename FunctionState>
-  static void TearDownFunctionState(FunctionState* function_state) {
-    if (function_state->outer_function_state_ != NULL) {
-      function_state->isolate_->set_ast_node_id(
-          function_state->saved_ast_node_id_);
-    }
-  }
-
-  // Helper functions for recursive descent.
-  bool IsEvalOrArguments(Handle<String> identifier) const;
-
-  static bool IsBoilerplateProperty(ObjectLiteral::Property* property) {
-    return ObjectLiteral::IsBoilerplateProperty(property);
-  }
-
-  static bool IsArrayIndex(Handle<String> string, uint32_t* index) {
-    return !string.is_null() && string->AsArrayIndex(index);
-  }
-
-  static void PushLiteralName(FuncNameInferrer* fni, Handle<String> id) {
-    fni->PushLiteralName(id);
-  }
-
-  static void CheckFunctionLiteralInsideTopLevelObjectLiteral(
-      Scope* scope, Expression* value, bool* has_function) {
-    if (scope->DeclarationScope()->is_global_scope() &&
-        value->AsFunctionLiteral() != NULL) {
-      *has_function = true;
-      value->AsFunctionLiteral()->set_pretenure();
-    }
-  }
-
-  // Reporting errors.
-  void ReportMessageAt(Scanner::Location source_location,
-                       const char* message,
-                       Vector<const char*> args);
-  void ReportMessage(const char* message, Vector<Handle<String> > args);
-  void ReportMessageAt(Scanner::Location source_location,
-                       const char* message,
-                       Vector<Handle<String> > args);
-
-  // "null" return type creators.
-  static Handle<String> EmptyIdentifier() {
-    return Handle<String>();
-  }
-  static Expression* EmptyExpression() {
-    return NULL;
-  }
-  static Literal* EmptyLiteral() {
-    return NULL;
-  }
-  static ZoneList<Expression*>* NullExpressionList() {
-    return NULL;
-  }
-
-  // Odd-ball literal creators.
-  Literal* GetLiteralTheHole(int position,
-                             AstNodeFactory<AstConstructionVisitor>* factory);
-
-  // Producing data during the recursive descent.
-  Handle<String> GetSymbol(Scanner* scanner = NULL);
-  Handle<String> NextLiteralString(Scanner* scanner,
-                                   PretenureFlag tenured);
-  Expression* ThisExpression(Scope* scope,
-                             AstNodeFactory<AstConstructionVisitor>* factory);
-  Literal* ExpressionFromLiteral(
-      Token::Value token, int pos, Scanner* scanner,
-      AstNodeFactory<AstConstructionVisitor>* factory);
-  Expression* ExpressionFromIdentifier(
-      Handle<String> name, int pos, Scope* scope,
-      AstNodeFactory<AstConstructionVisitor>* factory);
-  Expression* ExpressionFromString(
-      int pos, Scanner* scanner,
-      AstNodeFactory<AstConstructionVisitor>* factory);
-  ZoneList<v8::internal::Expression*>* NewExpressionList(int size, Zone* zone) {
-    return new(zone) ZoneList<v8::internal::Expression*>(size, zone);
-  }
-  ZoneList<ObjectLiteral::Property*>* NewPropertyList(int size, Zone* zone) {
-    return new(zone) ZoneList<ObjectLiteral::Property*>(size, zone);
-  }
-
-  // Temporary glue; these functions will move to ParserBase.
-  Expression* ParseAssignmentExpression(bool accept_IN, bool* ok);
-  Expression* ParseV8Intrinsic(bool* ok);
-  FunctionLiteral* ParseFunctionLiteral(
-      Handle<String> name,
-      Scanner::Location function_name_location,
-      bool name_is_strict_reserved,
-      bool is_generator,
-      int function_token_position,
-      FunctionLiteral::FunctionType type,
-      bool* ok);
-
- private:
-  Parser* parser_;
-};
-
-
-class Parser : public ParserBase<ParserTraits> {
+class Parser : public ParserBase {
  public:
   explicit Parser(CompilationInfo* info);
   ~Parser() {
@@ -555,8 +427,6 @@ class Parser : public ParserBase<ParserTraits> {
   bool Parse();
 
  private:
-  friend class ParserTraits;
-
   static const int kMaxNumFunctionLocals = 131071;  // 2^17-1
 
   enum Mode {
@@ -577,6 +447,64 @@ class Parser : public ParserBase<ParserTraits> {
     kHasNoInitializers
   };
 
+  class BlockState;
+
+  class FunctionState BASE_EMBEDDED {
+   public:
+    FunctionState(Parser* parser, Scope* scope);
+    ~FunctionState();
+
+    int NextMaterializedLiteralIndex() {
+      return next_materialized_literal_index_++;
+    }
+    int materialized_literal_count() {
+      return next_materialized_literal_index_ - JSFunction::kLiteralsPrefixSize;
+    }
+
+    int NextHandlerIndex() { return next_handler_index_++; }
+    int handler_count() { return next_handler_index_; }
+
+    void AddProperty() { expected_property_count_++; }
+    int expected_property_count() { return expected_property_count_; }
+
+    void set_generator_object_variable(Variable *variable) {
+      ASSERT(variable != NULL);
+      ASSERT(!is_generator());
+      generator_object_variable_ = variable;
+    }
+    Variable* generator_object_variable() const {
+      return generator_object_variable_;
+    }
+    bool is_generator() const {
+      return generator_object_variable_ != NULL;
+    }
+
+    AstNodeFactory<AstConstructionVisitor>* factory() { return &factory_; }
+
+   private:
+    // Used to assign an index to each literal that needs materialization in
+    // the function.  Includes regexp literals, and boilerplate for object and
+    // array literals.
+    int next_materialized_literal_index_;
+
+    // Used to assign a per-function index to try and catch handlers.
+    int next_handler_index_;
+
+    // Properties count estimation.
+    int expected_property_count_;
+
+    // For generators, the variable that holds the generator object.  This
+    // variable is used by yield expressions and return statements.  NULL
+    // indicates that this function is not a generator.
+    Variable* generator_object_variable_;
+
+    Parser* parser_;
+    FunctionState* outer_function_state_;
+    Scope* outer_scope_;
+    int saved_ast_node_id_;
+    AstNodeFactory<AstConstructionVisitor> factory_;
+  };
+
   class ParsingModeScope BASE_EMBEDDED {
    public:
     ParsingModeScope(Parser* parser, Mode mode)
@@ -593,6 +521,10 @@ class Parser : public ParserBase<ParserTraits> {
     Mode old_mode_;
   };
 
+  virtual bool is_classic_mode() {
+    return top_scope_->is_classic_mode();
+  }
+
   // Returns NULL if parsing failed.
   FunctionLiteral* ParseProgram();
 
@@ -600,6 +532,7 @@ class Parser : public ParserBase<ParserTraits> {
   FunctionLiteral* ParseLazy(Utf16CharacterStream* source);
 
   Isolate* isolate() { return isolate_; }
+  Zone* zone() const { return zone_; }
   CompilationInfo* info() const { return info_; }
 
   // Called by ParseProgram after setting up the scanner.
@@ -608,19 +541,38 @@ class Parser : public ParserBase<ParserTraits> {
 
   // Report syntax error
   void ReportInvalidPreparseData(Handle<String> name, bool* ok);
+  void ReportMessage(const char* message, Vector<const char*> args);
+  void ReportMessage(const char* message, Vector<Handle<String> > args);
+  void ReportMessageAt(Scanner::Location location, const char* type) {
+    ReportMessageAt(location, type, Vector<const char*>::empty());
+  }
+  void ReportMessageAt(Scanner::Location loc,
+                       const char* message,
+                       Vector<const char*> args);
+  void ReportMessageAt(Scanner::Location loc,
+                       const char* message,
+                       Vector<Handle<String> > args);
 
   void set_pre_parse_data(ScriptDataImpl *data) {
     pre_parse_data_ = data;
     symbol_cache_.Initialize(data ? data->symbol_count() : 0, zone());
   }
 
-  bool inside_with() const { return scope_->inside_with(); }
+  bool inside_with() const { return top_scope_->inside_with(); }
+  Scanner& scanner()  { return scanner_; }
   Mode mode() const { return mode_; }
   ScriptDataImpl* pre_parse_data() const { return pre_parse_data_; }
+  bool is_extended_mode() {
+    ASSERT(top_scope_ != NULL);
+    return top_scope_->is_extended_mode();
+  }
   Scope* DeclarationScope(VariableMode mode) {
     return IsLexicalVariableMode(mode)
-        ? scope_ : scope_->DeclarationScope();
+        ? top_scope_ : top_scope_->DeclarationScope();
   }
+
+  // Check if the given string is 'eval' or 'arguments'.
+  bool IsEvalOrArguments(Handle<String> string);
 
   // All ParseXXX functions take as the last argument an *ok parameter
   // which is set to false if parsing failed; it is unchanged otherwise.
@@ -671,6 +623,7 @@ class Parser : public ParserBase<ParserTraits> {
   // Support for hamony block scoped bindings.
   Block* ParseScopedBlock(ZoneStringList* labels, bool* ok);
 
+  Expression* ParseExpression(bool accept_IN, bool* ok);
   Expression* ParseAssignmentExpression(bool accept_IN, bool* ok);
   Expression* ParseYieldExpression(bool* ok);
   Expression* ParseConditionalExpression(bool accept_IN, bool* ok);
@@ -678,11 +631,15 @@ class Parser : public ParserBase<ParserTraits> {
   Expression* ParseUnaryExpression(bool* ok);
   Expression* ParsePostfixExpression(bool* ok);
   Expression* ParseLeftHandSideExpression(bool* ok);
-  Expression* ParseMemberWithNewPrefixesExpression(bool* ok);
+  Expression* ParseNewExpression(bool* ok);
   Expression* ParseMemberExpression(bool* ok);
-  Expression* ParseMemberExpressionContinuation(Expression* expression,
-                                                bool* ok);
+  Expression* ParseNewPrefix(PositionStack* stack, bool* ok);
+  Expression* ParseMemberWithNewPrefixesExpression(PositionStack* stack,
+                                                   bool* ok);
+  Expression* ParsePrimaryExpression(bool* ok);
+  Expression* ParseArrayLiteral(bool* ok);
   Expression* ParseObjectLiteral(bool* ok);
+  Expression* ParseRegExpLiteral(bool seen_equal, bool* ok);
 
   // Initialize the components of a for-in / for-of statement.
   void InitializeForEachStatement(ForEachStatement* stmt,
@@ -690,6 +647,7 @@ class Parser : public ParserBase<ParserTraits> {
                                   Expression* subject,
                                   Statement* body);
 
+  ZoneList<Expression*>* ParseArguments(bool* ok);
   FunctionLiteral* ParseFunctionLiteral(
       Handle<String> name,
       Scanner::Location function_name_location,
@@ -702,20 +660,43 @@ class Parser : public ParserBase<ParserTraits> {
   // Magical syntax support.
   Expression* ParseV8Intrinsic(bool* ok);
 
+  bool is_generator() const { return current_function_state_->is_generator(); }
+
   bool CheckInOrOf(bool accept_OF, ForEachStatement::VisitMode* visit_mode);
 
   Handle<String> LiteralString(PretenureFlag tenured) {
-    if (scanner()->is_literal_ascii()) {
+    if (scanner().is_literal_ascii()) {
       return isolate_->factory()->NewStringFromAscii(
-          scanner()->literal_ascii_string(), tenured);
+          scanner().literal_ascii_string(), tenured);
     } else {
       return isolate_->factory()->NewStringFromTwoByte(
-            scanner()->literal_utf16_string(), tenured);
+            scanner().literal_utf16_string(), tenured);
     }
   }
 
+  Handle<String> NextLiteralString(PretenureFlag tenured) {
+    if (scanner().is_next_literal_ascii()) {
+      return isolate_->factory()->NewStringFromAscii(
+          scanner().next_literal_ascii_string(), tenured);
+    } else {
+      return isolate_->factory()->NewStringFromTwoByte(
+          scanner().next_literal_utf16_string(), tenured);
+    }
+  }
+
+  Handle<String> GetSymbol();
+
   // Get odd-ball literals.
   Literal* GetLiteralUndefined(int position);
+  Literal* GetLiteralTheHole(int position);
+
+  Handle<String> ParseIdentifier(AllowEvalOrArgumentsAsIdentifier, bool* ok);
+  Handle<String> ParseIdentifierOrStrictReservedWord(
+      bool* is_strict_reserved, bool* ok);
+  Handle<String> ParseIdentifierName(bool* ok);
+  Handle<String> ParseIdentifierNameOrGetOrSet(bool* is_get,
+                                               bool* is_set,
+                                               bool* ok);
 
   // Determine if the expression is a variable proxy and mark it as being used
   // in an assignment or with a increment/decrement operator. This is currently
@@ -779,19 +760,35 @@ class Parser : public ParserBase<ParserTraits> {
   PreParser::PreParseResult LazyParseFunctionLiteral(
        SingletonLogger* logger);
 
+  AstNodeFactory<AstConstructionVisitor>* factory() {
+    return current_function_state_->factory();
+  }
+
   Isolate* isolate_;
   ZoneList<Handle<String> > symbol_cache_;
 
   Handle<Script> script_;
   Scanner scanner_;
   PreParser* reusable_preparser_;
+  Scope* top_scope_;
   Scope* original_scope_;  // for ES5 function declarations in sloppy eval
+  FunctionState* current_function_state_;
   Target* target_stack_;  // for break, continue statements
+  v8::Extension* extension_;
   ScriptDataImpl* pre_parse_data_;
+  FuncNameInferrer* fni_;
 
   Mode mode_;
+  // If true, the next (and immediately following) function literal is
+  // preceded by a parenthesis.
+  // Heuristically that means that the function will be called immediately,
+  // so never lazily compile it.
+  bool parenthesized_function_;
 
+  Zone* zone_;
   CompilationInfo* info_;
+  friend class BlockState;
+  friend class FunctionState;
 };
 
 

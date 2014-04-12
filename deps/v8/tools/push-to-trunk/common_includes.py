@@ -26,9 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import argparse
 import datetime
-import json
 import os
 import re
 import subprocess
@@ -36,8 +34,6 @@ import sys
 import textwrap
 import time
 import urllib2
-
-from git_recipes import GitRecipesMixin
 
 PERSISTFILE_BASENAME = "PERSISTFILE_BASENAME"
 TEMP_BRANCH = "TEMP_BRANCH"
@@ -223,11 +219,17 @@ class NoRetryException(Exception):
   pass
 
 
-class GitFailedException(Exception):
-  pass
+class CommonOptions(object):
+  def __init__(self, options, manual=True):
+    self.requires_editor = True
+    self.wait_for_lgtm = True
+    self.s = options.s
+    self.force_readline_defaults = not manual
+    self.force_upload = not manual
+    self.manual = manual
 
 
-class Step(GitRecipesMixin):
+class Step(object):
   def __init__(self, text, requires, number, config, state, options, handler):
     self._text = text
     self._requires = requires
@@ -240,35 +242,18 @@ class Step(GitRecipesMixin):
     assert self._config is not None
     assert self._state is not None
     assert self._side_effect_handler is not None
-
-  def __getitem__(self, key):
-    # Convenience method to allow direct [] access on step classes for
-    # manipulating the backed state dict.
-    return self._state[key]
-
-  def __setitem__(self, key, value):
-    # Convenience method to allow direct [] access on step classes for
-    # manipulating the backed state dict.
-    self._state[key] = value
+    assert isinstance(options, CommonOptions)
 
   def Config(self, key):
     return self._config[key]
 
   def Run(self):
-    # Restore state.
-    state_file = "%s-state.json" % self._config[PERSISTFILE_BASENAME]
-    if not self._state and os.path.exists(state_file):
-      self._state.update(json.loads(FileToText(state_file)))
-
-    # Skip step if requirement is not met.
-    if self._requires and not self._state.get(self._requires):
-      return
-
+    if self._requires:
+      self.RestoreIfUnset(self._requires)
+      if not self._state[self._requires]:
+        return
     print ">>> Step %d: %s" % (self._number, self._text)
     self.RunStep()
-
-    # Persist state.
-    TextToFile(json.dumps(self._state), state_file)
 
   def RunStep(self):
     raise NotImplementedError
@@ -314,13 +299,6 @@ class Step(GitRecipesMixin):
 
   def Git(self, args="", prefix="", pipe=True, retry_on=None):
     cmd = lambda: self._side_effect_handler.Command("git", args, prefix, pipe)
-    result = self.Retry(cmd, retry_on, [5, 30])
-    if result is None:
-      raise GitFailedException("'git %s' failed." % args)
-    return result
-
-  def SVN(self, args="", prefix="", pipe=True, retry_on=None):
-    cmd = lambda: self._side_effect_handler.Command("svn", args, prefix, pipe)
     return self.Retry(cmd, retry_on, [5, 30])
 
   def Editor(self, args):
@@ -353,15 +331,30 @@ class Step(GitRecipesMixin):
     return answer == "" or answer == "Y" or answer == "y"
 
   def DeleteBranch(self, name):
-    for line in self.GitBranch().splitlines():
+    git_result = self.Git("branch").strip()
+    for line in git_result.splitlines():
       if re.match(r".*\s+%s$" % name, line):
         msg = "Branch %s exists, do you want to delete it?" % name
         if self.Confirm(msg):
-          self.GitDeleteBranch(name)
+          if self.Git("branch -D %s" % name) is None:
+            self.Die("Deleting branch '%s' failed." % name)
           print "Branch %s deleted." % name
         else:
           msg = "Can't continue. Please delete branch %s and try again." % name
           self.Die(msg)
+
+  def Persist(self, var, value):
+    value = value or "__EMPTY__"
+    TextToFile(value, "%s-%s" % (self._config[PERSISTFILE_BASENAME], var))
+
+  def Restore(self, var):
+    value = FileToText("%s-%s" % (self._config[PERSISTFILE_BASENAME], var))
+    value = value or self.Die("Variable '%s' could not be restored." % var)
+    return "" if value == "__EMPTY__" else value
+
+  def RestoreIfUnset(self, var_name):
+    if self._state.get(var_name) is None:
+      self._state[var_name] = self.Restore(var_name)
 
   def InitialEnvironmentChecks(self):
     # Cancel if this is not a git checkout.
@@ -375,30 +368,40 @@ class Step(GitRecipesMixin):
 
   def CommonPrepare(self):
     # Check for a clean workdir.
-    if not self.GitIsWorkdirClean():
+    if self.Git("status -s -uno").strip() != "":
       self.Die("Workspace is not clean. Please commit or undo your changes.")
 
     # Persist current branch.
-    self["current_branch"] = self.GitCurrentBranch()
+    current_branch = ""
+    git_result = self.Git("status -s -b -uno").strip()
+    for line in git_result.splitlines():
+      match = re.match(r"^## (.+)", line)
+      if match:
+        current_branch = match.group(1)
+        break
+    self.Persist("current_branch", current_branch)
 
     # Fetch unfetched revisions.
-    self.GitSVNFetch()
+    if self.Git("svn fetch") is None:
+      self.Die("'git svn fetch' failed.")
 
   def PrepareBranch(self):
     # Get ahold of a safe temporary branch and check it out.
-    if self["current_branch"] != self._config[TEMP_BRANCH]:
+    self.RestoreIfUnset("current_branch")
+    if self._state["current_branch"] != self._config[TEMP_BRANCH]:
       self.DeleteBranch(self._config[TEMP_BRANCH])
-      self.GitCreateBranch(self._config[TEMP_BRANCH])
+      self.Git("checkout -b %s" % self._config[TEMP_BRANCH])
 
     # Delete the branch that will be created later if it exists already.
     self.DeleteBranch(self._config[BRANCHNAME])
 
   def CommonCleanup(self):
-    self.GitCheckout(self["current_branch"])
-    if self._config[TEMP_BRANCH] != self["current_branch"]:
-      self.GitDeleteBranch(self._config[TEMP_BRANCH])
-    if self._config[BRANCHNAME] != self["current_branch"]:
-      self.GitDeleteBranch(self._config[BRANCHNAME])
+    self.RestoreIfUnset("current_branch")
+    self.Git("checkout -f %s" % self._state["current_branch"])
+    if self._config[TEMP_BRANCH] != self._state["current_branch"]:
+      self.Git("branch -D %s" % self._config[TEMP_BRANCH])
+    if self._config[BRANCHNAME] != self._state["current_branch"]:
+      self.Git("branch -D %s" % self._config[BRANCHNAME])
 
     # Clean up all temporary files.
     Command("rm", "-f %s*" % self._config[PERSISTFILE_BASENAME])
@@ -408,13 +411,18 @@ class Step(GitRecipesMixin):
       match = re.match(r"^#define %s\s+(\d*)" % def_name, line)
       if match:
         value = match.group(1)
-        self["%s%s" % (prefix, var_name)] = value
+        self.Persist("%s%s" % (prefix, var_name), value)
+        self._state["%s%s" % (prefix, var_name)] = value
     for line in LinesInFile(self._config[VERSION_FILE]):
       for (var_name, def_name) in [("major", "MAJOR_VERSION"),
                                    ("minor", "MINOR_VERSION"),
                                    ("build", "BUILD_NUMBER"),
                                    ("patch", "PATCH_LEVEL")]:
         ReadAndPersist(var_name, def_name)
+
+  def RestoreVersionIfUnset(self, prefix=""):
+    for v in ["major", "minor", "build", "patch"]:
+      self.RestoreIfUnset("%s%s" % (prefix, v))
 
   def WaitForLGTM(self):
     print ("Please wait for an LGTM, then type \"LGTM<Return>\" to commit "
@@ -443,31 +451,29 @@ class Step(GitRecipesMixin):
       answer = self.ReadLine()
 
   # Takes a file containing the patch to apply as first argument.
-  def ApplyPatch(self, patch_file, revert=False):
-    try:
-      self.GitApplyPatch(patch_file, revert)
-    except GitFailedException:
+  def ApplyPatch(self, patch_file, reverse_patch=""):
+    args = "apply --index --reject %s \"%s\"" % (reverse_patch, patch_file)
+    if self.Git(args) is None:
       self.WaitForResolvingConflicts(patch_file)
-
-  def FindLastTrunkPush(self, parent_hash=""):
-    push_pattern = "^Version [[:digit:]]*\.[[:digit:]]*\.[[:digit:]]* (based"
-    branch = "" if parent_hash else "svn/trunk"
-    return self.GitLog(n=1, format="%H", grep=push_pattern,
-                       parent_hash=parent_hash, branch=branch)
 
 
 class UploadStep(Step):
   MESSAGE = "Upload for code review."
 
   def RunStep(self):
-    if self._options.reviewer:
-      print "Using account %s for review." % self._options.reviewer
-      reviewer = self._options.reviewer
+    if self._options.r:
+      print "Using account %s for review." % self._options.r
+      reviewer = self._options.r
     else:
       print "Please enter the email address of a V8 reviewer for your patch: ",
       self.DieNoManualMode("A reviewer must be specified in forced mode.")
       reviewer = self.ReadLine()
-    self.GitUpload(reviewer, self._options.author, self._options.force_upload)
+    force_flag = " -f" if self._options.force_upload else ""
+    args = "cl upload -r \"%s\" --send-mail%s" % (reviewer, force_flag)
+    # TODO(machenbach): Check output in forced mode. Verify that all required
+    # base files were uploaded, if not retry.
+    if self.Git(args, pipe=False) is None:
+      self.Die("'git cl upload' failed, please try again.")
 
 
 def MakeStep(step_class=Step, number=0, state=None, config=None,
@@ -490,81 +496,15 @@ def MakeStep(step_class=Step, number=0, state=None, config=None,
                       handler=side_effect_handler)
 
 
-class ScriptsBase(object):
-  # TODO(machenbach): Move static config here.
-  def __init__(self, config, side_effect_handler=DEFAULT_SIDE_EFFECT_HANDLER,
-               state=None):
-    self._config = config
-    self._side_effect_handler = side_effect_handler
-    self._state = state if state is not None else {}
+def RunScript(step_classes,
+              config,
+              options,
+              side_effect_handler=DEFAULT_SIDE_EFFECT_HANDLER):
+  state = {}
+  steps = []
+  for (number, step_class) in enumerate(step_classes):
+    steps.append(MakeStep(step_class, number, state, config,
+                          options, side_effect_handler))
 
-  def _Description(self):
-    return None
-
-  def _PrepareOptions(self, parser):
-    pass
-
-  def _ProcessOptions(self, options):
-    return True
-
-  def _Steps(self):
-    raise Exception("Not implemented.")
-
-  def MakeOptions(self, args=None):
-    parser = argparse.ArgumentParser(description=self._Description())
-    parser.add_argument("-a", "--author", default="",
-                        help="The author email used for rietveld.")
-    parser.add_argument("-r", "--reviewer", default="",
-                        help="The account name to be used for reviews.")
-    parser.add_argument("-s", "--step",
-                      help="Specify the step where to start work. Default: 0.",
-                      default=0, type=int)
-
-    self._PrepareOptions(parser)
-
-    if args is None:
-      options = parser.parse_args()
-    else:
-      options = parser.parse_args(args)
-
-    # Process common options.
-    if options.step < 0:
-      print "Bad step number %d" % options.step
-      parser.print_help()
-      return None
-
-    # Defaults for options, common to all scripts.
-    options.manual = getattr(options, "manual", True)
-    options.force = getattr(options, "force", False)
-
-    # Derived options.
-    options.requires_editor = not options.force
-    options.wait_for_lgtm = not options.force
-    options.force_readline_defaults = not options.manual
-    options.force_upload = not options.manual
-
-    # Process script specific options.
-    if not self._ProcessOptions(options):
-      parser.print_help()
-      return None
-    return options
-
-  def RunSteps(self, step_classes, args=None):
-    options = self.MakeOptions(args)
-    if not options:
-      return 1
-
-    state_file = "%s-state.json" % self._config[PERSISTFILE_BASENAME]
-    if options.step == 0 and os.path.exists(state_file):
-      os.remove(state_file)
-
-    steps = []
-    for (number, step_class) in enumerate(step_classes):
-      steps.append(MakeStep(step_class, number, self._state, self._config,
-                            options, self._side_effect_handler))
-    for step in steps[options.step:]:
-      step.Run()
-    return 0
-
-  def Run(self, args=None):
-    return self.RunSteps(self._Steps(), args)
+  for step in steps[options.s:]:
+    step.Run()

@@ -345,6 +345,7 @@ bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
                         info->function()->scope()->AllowsLazyCompilation());
   cgen.PopulateDeoptimizationData(code);
   cgen.PopulateTypeFeedbackInfo(code);
+  cgen.PopulateTypeFeedbackCells(code);
   code->set_has_deoptimization_support(info->HasDeoptimizationSupport());
   code->set_handler_table(*cgen.handler_table());
 #ifdef ENABLE_DEBUGGER_SUPPORT
@@ -424,6 +425,21 @@ void FullCodeGenerator::Initialize() {
 }
 
 
+void FullCodeGenerator::PopulateTypeFeedbackCells(Handle<Code> code) {
+  if (type_feedback_cells_.is_empty()) return;
+  int length = type_feedback_cells_.length();
+  int array_size = TypeFeedbackCells::LengthOfFixedArray(length);
+  Handle<TypeFeedbackCells> cache = Handle<TypeFeedbackCells>::cast(
+      isolate()->factory()->NewFixedArray(array_size, TENURED));
+  for (int i = 0; i < length; i++) {
+    cache->SetAstId(i, type_feedback_cells_[i].ast_id);
+    cache->SetCell(i, *type_feedback_cells_[i].cell);
+  }
+  TypeFeedbackInfo::cast(code->type_feedback_info())->set_type_feedback_cells(
+      *cache);
+}
+
+
 void FullCodeGenerator::PrepareForBailout(Expression* node, State state) {
   PrepareForBailoutForId(node->id(), state);
 }
@@ -433,13 +449,13 @@ void FullCodeGenerator::CallLoadIC(ContextualMode contextual_mode,
                                    TypeFeedbackId id) {
   ExtraICState extra_state = LoadIC::ComputeExtraICState(contextual_mode);
   Handle<Code> ic = LoadIC::initialize_stub(isolate(), extra_state);
-  CallIC(ic, id);
+  CallIC(ic, contextual_mode, id);
 }
 
 
-void FullCodeGenerator::CallStoreIC(TypeFeedbackId id) {
+void FullCodeGenerator::CallStoreIC(ContextualMode mode, TypeFeedbackId id) {
   Handle<Code> ic = StoreIC::initialize_stub(isolate(), strict_mode());
-  CallIC(ic, id);
+  CallIC(ic, mode, id);
 }
 
 
@@ -471,6 +487,13 @@ void FullCodeGenerator::PrepareForBailoutForId(BailoutId id, State state) {
   ASSERT(!prepared_bailout_ids_.Contains(id.ToInt()));
   prepared_bailout_ids_.Add(id.ToInt(), zone());
   bailout_entries_.Add(entry, zone());
+}
+
+
+void FullCodeGenerator::RecordTypeFeedbackCell(
+    TypeFeedbackId id, Handle<Cell> cell) {
+  TypeFeedbackCellEntry entry = { id, cell };
+  type_feedback_cells_.Add(entry, zone());
 }
 
 
@@ -802,10 +825,10 @@ void FullCodeGenerator::VisitModuleUrl(ModuleUrl* module) {
 
 
 int FullCodeGenerator::DeclareGlobalsFlags() {
-  ASSERT(DeclareGlobalsStrictMode::is_valid(strict_mode()));
+  ASSERT(DeclareGlobalsLanguageMode::is_valid(language_mode()));
   return DeclareGlobalsEvalFlag::encode(is_eval()) |
       DeclareGlobalsNativeFlag::encode(is_native()) |
-      DeclareGlobalsStrictMode::encode(strict_mode());
+      DeclareGlobalsLanguageMode::encode(language_mode());
 }
 
 
@@ -895,6 +918,7 @@ void FullCodeGenerator::SetSourcePosition(int pos) {
 const FullCodeGenerator::InlineFunctionGenerator
   FullCodeGenerator::kInlineFunctionGenerators[] = {
     INLINE_FUNCTION_LIST(INLINE_FUNCTION_GENERATOR_ADDRESS)
+    INLINE_RUNTIME_FUNCTION_LIST(INLINE_FUNCTION_GENERATOR_ADDRESS)
   };
 #undef INLINE_FUNCTION_GENERATOR_ADDRESS
 
@@ -936,34 +960,6 @@ void FullCodeGenerator::EmitGeneratorThrow(CallRuntime* expr) {
 
 void FullCodeGenerator::EmitDebugBreakInOptimizedCode(CallRuntime* expr) {
   context()->Plug(handle(Smi::FromInt(0), isolate()));
-}
-
-
-void FullCodeGenerator::EmitDoubleHi(CallRuntime* expr) {
-  ZoneList<Expression*>* args = expr->arguments();
-  ASSERT(args->length() == 1);
-  VisitForStackValue(args->at(0));
-  masm()->CallRuntime(Runtime::kDoubleHi, 1);
-  context()->Plug(result_register());
-}
-
-
-void FullCodeGenerator::EmitDoubleLo(CallRuntime* expr) {
-  ZoneList<Expression*>* args = expr->arguments();
-  ASSERT(args->length() == 1);
-  VisitForStackValue(args->at(0));
-  masm()->CallRuntime(Runtime::kDoubleLo, 1);
-  context()->Plug(result_register());
-}
-
-
-void FullCodeGenerator::EmitConstructDouble(CallRuntime* expr) {
-  ZoneList<Expression*>* args = expr->arguments();
-  ASSERT(args->length() == 2);
-  VisitForStackValue(args->at(0));
-  VisitForStackValue(args->at(1));
-  masm()->CallRuntime(Runtime::kConstructDouble, 2);
-  context()->Plug(result_register());
 }
 
 
@@ -1605,8 +1601,7 @@ void FullCodeGenerator::VisitNativeFunctionLiteral(
   bool is_generator = false;
   Handle<SharedFunctionInfo> shared =
       isolate()->factory()->NewSharedFunctionInfo(name, literals, is_generator,
-          code, Handle<ScopeInfo>(fun->shared()->scope_info()),
-          Handle<FixedArray>(fun->shared()->feedback_vector()));
+          code, Handle<ScopeInfo>(fun->shared()->scope_info()));
   shared->set_construct_stub(*construct_stub);
 
   // Copy the function data to the shared function info.

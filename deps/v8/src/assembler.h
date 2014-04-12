@@ -384,10 +384,6 @@ class RelocInfo BASE_EMBEDDED {
   // instructions).
   bool IsCodedSpecially();
 
-  // If true, the pointer this relocation info refers to is an entry in the
-  // constant pool, otherwise the pointer is embedded in the instruction stream.
-  bool IsInConstantPool();
-
   // Read/modify the code target in the branch/call instruction
   // this relocation applies to;
   // can only be called if IsCodeTarget(rmode_) || IsRuntimeEntry(rmode_)
@@ -410,10 +406,6 @@ class RelocInfo BASE_EMBEDDED {
   INLINE(Code* code_age_stub());
   INLINE(void set_code_age_stub(Code* stub));
 
-  // Returns the address of the constant pool entry where the target address
-  // is held.  This should only be called if IsInConstantPool returns true.
-  INLINE(Address constant_pool_entry_address());
-
   // Read the address of the word containing the target_address in an
   // instruction stream.  What this means exactly is architecture-independent.
   // The only architecture-independent user of this function is the serializer.
@@ -421,7 +413,6 @@ class RelocInfo BASE_EMBEDDED {
   // output before the next target.  Architecture-independent code shouldn't
   // dereference the pointer it gets back from this.
   INLINE(Address target_address_address());
-
   // This indicates how much space a target takes up when deserializing a code
   // stream.  For most architectures this is just the size of a pointer.  For
   // an instruction like movw/movt where the target bits are mixed into the
@@ -720,6 +711,8 @@ class ExternalReference BASE_EMBEDDED {
 
   static ExternalReference incremental_marking_record_write_function(
       Isolate* isolate);
+  static ExternalReference incremental_evacuation_record_write_function(
+      Isolate* isolate);
   static ExternalReference store_buffer_overflow_function(
       Isolate* isolate);
   static ExternalReference flush_icache_function(Isolate* isolate);
@@ -1009,6 +1002,32 @@ class PreservePositionScope BASE_EMBEDDED {
 // -----------------------------------------------------------------------------
 // Utility functions
 
+inline bool is_intn(int x, int n)  {
+  return -(1 << (n-1)) <= x && x < (1 << (n-1));
+}
+
+inline bool is_int8(int x)  { return is_intn(x, 8); }
+inline bool is_int16(int x)  { return is_intn(x, 16); }
+inline bool is_int18(int x)  { return is_intn(x, 18); }
+inline bool is_int24(int x)  { return is_intn(x, 24); }
+
+inline bool is_uintn(int x, int n) {
+  return (x & -(1 << n)) == 0;
+}
+
+inline bool is_uint2(int x)  { return is_uintn(x, 2); }
+inline bool is_uint3(int x)  { return is_uintn(x, 3); }
+inline bool is_uint4(int x)  { return is_uintn(x, 4); }
+inline bool is_uint5(int x)  { return is_uintn(x, 5); }
+inline bool is_uint6(int x)  { return is_uintn(x, 6); }
+inline bool is_uint8(int x)  { return is_uintn(x, 8); }
+inline bool is_uint10(int x)  { return is_uintn(x, 10); }
+inline bool is_uint12(int x)  { return is_uintn(x, 12); }
+inline bool is_uint16(int x)  { return is_uintn(x, 16); }
+inline bool is_uint24(int x)  { return is_uintn(x, 24); }
+inline bool is_uint26(int x)  { return is_uintn(x, 26); }
+inline bool is_uint28(int x)  { return is_uintn(x, 28); }
+
 inline int NumberOfBitsSet(uint32_t x) {
   unsigned int num_bits_set;
   for (num_bits_set = 0; x; x >>= 1) {
@@ -1045,21 +1064,6 @@ class NullCallWrapper : public CallWrapper {
   virtual void BeforeCall(int call_size) const { }
   virtual void AfterCall() const { }
 };
-
-
-// The multiplier and shift for signed division via multiplication, see Warren's
-// "Hacker's Delight", chapter 10.
-class MultiplierAndShift {
- public:
-  explicit MultiplierAndShift(int32_t d);
-  int32_t multiplier() const { return multiplier_; }
-  int32_t shift() const { return shift_; }
-
- private:
-  int32_t multiplier_;
-  int32_t shift_;
-};
-
 
 } }  // namespace v8::internal
 

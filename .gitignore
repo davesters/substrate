@@ -2,7 +2,7 @@
 *.sdf
 *.opensdf
 *.user
-build/
+build/x64
 
 deps/v8/build/Debug
 deps/v8/build/Release

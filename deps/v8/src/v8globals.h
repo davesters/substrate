@@ -465,11 +465,11 @@ enum VariableMode {
   // User declared variables:
   VAR,             // declared via 'var', and 'function' declarations
 
-  CONST_LEGACY,    // declared via legacy 'const' declarations
+  CONST,           // declared via 'const' declarations
 
   LET,             // declared via 'let' declarations (first lexical)
 
-  CONST,           // declared via 'const' declarations
+  CONST_HARMONY,   // declared via 'const' declarations in harmony mode
 
   MODULE,          // declared via 'module' declaration (last lexical)
 
@@ -510,7 +510,7 @@ inline bool IsLexicalVariableMode(VariableMode mode) {
 
 
 inline bool IsImmutableVariableMode(VariableMode mode) {
-  return (mode >= CONST && mode <= MODULE) || mode == CONST_LEGACY;
+  return mode == CONST || (mode >= CONST_HARMONY && mode <= MODULE);
 }
 
 

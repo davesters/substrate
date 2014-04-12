@@ -490,8 +490,7 @@ void Heap::ScavengePointer(HeapObject** p) {
 }
 
 
-void Heap::UpdateAllocationSiteFeedback(HeapObject* object,
-                                        ScratchpadSlotMode mode) {
+void Heap::UpdateAllocationSiteFeedback(HeapObject* object) {
   Heap* heap = object->GetHeap();
   ASSERT(heap->InFromSpace(object));
 
@@ -519,7 +518,7 @@ void Heap::UpdateAllocationSiteFeedback(HeapObject* object,
   if (!memento->IsValid()) return;
 
   if (memento->GetAllocationSite()->IncrementMementoFoundCount()) {
-    heap->AddAllocationSiteToScratchpad(memento->GetAllocationSite(), mode);
+    heap->AddAllocationSiteToScratchpad(memento->GetAllocationSite());
   }
 }
 
@@ -542,7 +541,7 @@ void Heap::ScavengeObject(HeapObject** p, HeapObject* object) {
     return;
   }
 
-  UpdateAllocationSiteFeedback(object, IGNORE_SCRATCHPAD_SLOT);
+  UpdateAllocationSiteFeedback(object);
 
   // AllocationMementos are unrooted and shouldn't survive a scavenge
   ASSERT(object->map() != object->GetHeap()->allocation_memento_map());
@@ -817,13 +816,6 @@ void VerifyPointersVisitor::VisitPointers(Object** start, Object** end) {
       CHECK(object->GetIsolate()->heap()->Contains(object));
       CHECK(object->map()->IsMap());
     }
-  }
-}
-
-
-void VerifySmisVisitor::VisitPointers(Object** start, Object** end) {
-  for (Object** current = start; current < end; current++) {
-     CHECK((*current)->IsSmi());
   }
 }
 

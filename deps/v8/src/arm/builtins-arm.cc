@@ -155,9 +155,10 @@ void Builtins::Generate_ArrayCode(MacroAssembler* masm) {
 
   // Run the native code for the Array function called as a normal function.
   // tail call a stub
-  Handle<Object> megamorphic_sentinel =
-      TypeFeedbackInfo::MegamorphicSentinel(masm->isolate());
-  __ mov(r2, Operand(megamorphic_sentinel));
+  Handle<Object> undefined_sentinel(
+      masm->isolate()->heap()->undefined_value(),
+      masm->isolate());
+  __ mov(r2, Operand(undefined_sentinel));
   ArrayConstructorStub stub(masm->isolate());
   __ TailCallStub(&stub);
 }
@@ -737,9 +738,9 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     __ mov(r0, Operand(r3));
     if (is_construct) {
       // No type feedback cell is available
-      Handle<Object> megamorphic_sentinel =
-          TypeFeedbackInfo::MegamorphicSentinel(masm->isolate());
-      __ mov(r2, Operand(megamorphic_sentinel));
+      Handle<Object> undefined_sentinel(
+          masm->isolate()->heap()->undefined_value(), masm->isolate());
+      __ mov(r2, Operand(undefined_sentinel));
       CallConstructStub stub(NO_CALL_FUNCTION_FLAGS);
       __ CallStub(&stub);
     } else {
@@ -1038,7 +1039,7 @@ void Builtins::Generate_FunctionCall(MacroAssembler* masm) {
     __ tst(r3, Operand(1 << (SharedFunctionInfo::kNative + kSmiTagSize)));
     __ b(ne, &shift_arguments);
 
-    // Compute the receiver in sloppy mode.
+    // Compute the receiver in non-strict mode.
     __ add(r2, sp, Operand(r0, LSL, kPointerSizeLog2));
     __ ldr(r2, MemOperand(r2, -kPointerSize));
     // r0: actual number of arguments
@@ -1246,7 +1247,7 @@ void Builtins::Generate_FunctionApply(MacroAssembler* masm) {
     __ tst(r2, Operand(1 << (SharedFunctionInfo::kNative + kSmiTagSize)));
     __ b(ne, &push_receiver);
 
-    // Compute the receiver in sloppy mode.
+    // Compute the receiver in non-strict mode.
     __ JumpIfSmi(r0, &call_to_object);
     __ LoadRoot(r1, Heap::kNullValueRootIndex);
     __ cmp(r0, r1);

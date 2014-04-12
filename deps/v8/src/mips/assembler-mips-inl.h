@@ -156,12 +156,6 @@ Address RelocInfo::target_address_address() {
 }
 
 
-Address RelocInfo::constant_pool_entry_address() {
-  UNREACHABLE();
-  return NULL;
-}
-
-
 int RelocInfo::target_address_size() {
   return Assembler::kSpecialTargetSize;
 }

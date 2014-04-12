@@ -160,11 +160,6 @@ bool RelocInfo::IsCodedSpecially() {
 }
 
 
-bool RelocInfo::IsInConstantPool() {
-  return false;
-}
-
-
 void RelocInfo::PatchCode(byte* instructions, int instruction_count) {
   // Patch the code at the current address with the supplied instructions.
   for (int i = 0; i < instruction_count; i++) {
@@ -1261,14 +1256,6 @@ void Assembler::bts(const Operand& dst, Register src) {
   EMIT(0x0F);
   EMIT(0xAB);
   emit_operand(src, dst);
-}
-
-
-void Assembler::bsr(Register dst, const Operand& src) {
-  EnsureSpace ensure_space(this);
-  EMIT(0x0F);
-  EMIT(0xBD);
-  emit_operand(dst, src);
 }
 
 

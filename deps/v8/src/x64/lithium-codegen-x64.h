@@ -130,7 +130,9 @@ class LCodeGen: public LCodeGenBase {
 #undef DECLARE_DO
 
  private:
-  StrictMode strict_mode() const { return info()->strict_mode(); }
+  StrictModeFlag strict_mode_flag() const {
+    return info()->is_classic_mode() ? kNonStrictMode : kStrictMode;
+  }
 
   LPlatformChunk* chunk() const { return chunk_; }
   Scope* scope() const { return scope_; }

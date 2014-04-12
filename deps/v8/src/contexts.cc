@@ -185,12 +185,12 @@ Handle<Object> Context::Lookup(Handle<String> name,
             *binding_flags = (init_flag == kNeedsInitialization)
                 ? MUTABLE_CHECK_INITIALIZED : MUTABLE_IS_INITIALIZED;
             break;
-          case CONST_LEGACY:
+          case CONST:
             *attributes = READ_ONLY;
             *binding_flags = (init_flag == kNeedsInitialization)
                 ? IMMUTABLE_CHECK_INITIALIZED : IMMUTABLE_IS_INITIALIZED;
             break;
-          case CONST:
+          case CONST_HARMONY:
             *attributes = READ_ONLY;
             *binding_flags = (init_flag == kNeedsInitialization)
                 ? IMMUTABLE_CHECK_INITIALIZED_HARMONY :
@@ -222,8 +222,8 @@ Handle<Object> Context::Lookup(Handle<String> name,
           }
           *index = function_index;
           *attributes = READ_ONLY;
-          ASSERT(mode == CONST_LEGACY || mode == CONST);
-          *binding_flags = (mode == CONST_LEGACY)
+          ASSERT(mode == CONST || mode == CONST_HARMONY);
+          *binding_flags = (mode == CONST)
               ? IMMUTABLE_IS_INITIALIZED : IMMUTABLE_IS_INITIALIZED_HARMONY;
           return context;
         }

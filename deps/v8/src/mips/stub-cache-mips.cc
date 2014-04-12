@@ -313,7 +313,7 @@ void StubCompiler::GenerateFastPropertyLoad(MacroAssembler* masm,
                                             bool inobject,
                                             int index,
                                             Representation representation) {
-  ASSERT(!representation.IsDouble());
+  ASSERT(!FLAG_track_double_fields || !representation.IsDouble());
   int offset = index * kPointerSize;
   if (!inobject) {
     // Calculate the offset into the properties array.
@@ -467,11 +467,11 @@ void StoreStubCompiler::GenerateStoreTransition(MacroAssembler* masm,
     Handle<Object> constant(descriptors->GetValue(descriptor), masm->isolate());
     __ li(scratch1, constant);
     __ Branch(miss_label, ne, value_reg, Operand(scratch1));
-  } else if (representation.IsSmi()) {
+  } else if (FLAG_track_fields && representation.IsSmi()) {
     __ JumpIfNotSmi(value_reg, miss_label);
-  } else if (representation.IsHeapObject()) {
+  } else if (FLAG_track_heap_object_fields && representation.IsHeapObject()) {
     __ JumpIfSmi(value_reg, miss_label);
-  } else if (representation.IsDouble()) {
+  } else if (FLAG_track_double_fields && representation.IsDouble()) {
     Label do_store, heap_number;
     __ LoadRoot(scratch3, Heap::kHeapNumberMapRootIndex);
     __ AllocateHeapNumber(storage_reg, scratch1, scratch2, scratch3, slow);
@@ -545,15 +545,15 @@ void StoreStubCompiler::GenerateStoreTransition(MacroAssembler* masm,
   if (index < 0) {
     // Set the property straight into the object.
     int offset = object->map()->instance_size() + (index * kPointerSize);
-    if (representation.IsDouble()) {
+    if (FLAG_track_double_fields && representation.IsDouble()) {
       __ sw(storage_reg, FieldMemOperand(receiver_reg, offset));
     } else {
       __ sw(value_reg, FieldMemOperand(receiver_reg, offset));
     }
 
-    if (!representation.IsSmi()) {
+    if (!FLAG_track_fields || !representation.IsSmi()) {
       // Update the write barrier for the array address.
-      if (!representation.IsDouble()) {
+      if (!FLAG_track_double_fields || !representation.IsDouble()) {
         __ mov(storage_reg, value_reg);
       }
       __ RecordWriteField(receiver_reg,
@@ -571,15 +571,15 @@ void StoreStubCompiler::GenerateStoreTransition(MacroAssembler* masm,
     // Get the properties array
     __ lw(scratch1,
           FieldMemOperand(receiver_reg, JSObject::kPropertiesOffset));
-    if (representation.IsDouble()) {
+    if (FLAG_track_double_fields && representation.IsDouble()) {
       __ sw(storage_reg, FieldMemOperand(scratch1, offset));
     } else {
       __ sw(value_reg, FieldMemOperand(scratch1, offset));
     }
 
-    if (!representation.IsSmi()) {
+    if (!FLAG_track_fields || !representation.IsSmi()) {
       // Update the write barrier for the array address.
-      if (!representation.IsDouble()) {
+      if (!FLAG_track_double_fields || !representation.IsDouble()) {
         __ mov(storage_reg, value_reg);
       }
       __ RecordWriteField(scratch1,
@@ -630,11 +630,11 @@ void StoreStubCompiler::GenerateStoreField(MacroAssembler* masm,
 
   Representation representation = lookup->representation();
   ASSERT(!representation.IsNone());
-  if (representation.IsSmi()) {
+  if (FLAG_track_fields && representation.IsSmi()) {
     __ JumpIfNotSmi(value_reg, miss_label);
-  } else if (representation.IsHeapObject()) {
+  } else if (FLAG_track_heap_object_fields && representation.IsHeapObject()) {
     __ JumpIfSmi(value_reg, miss_label);
-  } else if (representation.IsDouble()) {
+  } else if (FLAG_track_double_fields && representation.IsDouble()) {
     // Load the double storage.
     if (index < 0) {
       int offset = object->map()->instance_size() + (index * kPointerSize);
@@ -676,7 +676,7 @@ void StoreStubCompiler::GenerateStoreField(MacroAssembler* masm,
     int offset = object->map()->instance_size() + (index * kPointerSize);
     __ sw(value_reg, FieldMemOperand(receiver_reg, offset));
 
-    if (!representation.IsSmi()) {
+    if (!FLAG_track_fields || !representation.IsSmi()) {
       // Skip updating write barrier if storing a smi.
       __ JumpIfSmi(value_reg, &exit);
 
@@ -700,7 +700,7 @@ void StoreStubCompiler::GenerateStoreField(MacroAssembler* masm,
           FieldMemOperand(receiver_reg, JSObject::kPropertiesOffset));
     __ sw(value_reg, FieldMemOperand(scratch1, offset));
 
-    if (!representation.IsSmi()) {
+    if (!FLAG_track_fields || !representation.IsSmi()) {
       // Skip updating write barrier if storing a smi.
       __ JumpIfSmi(value_reg, &exit);
 
@@ -770,14 +770,13 @@ static void CompileCallLoadPropertyWithInterceptor(
 
 
 // Generate call to api function.
-void StubCompiler::GenerateFastApiCall(MacroAssembler* masm,
-                                       const CallOptimization& optimization,
-                                       Handle<Map> receiver_map,
-                                       Register receiver,
-                                       Register scratch_in,
-                                       bool is_store,
-                                       int argc,
-                                       Register* values) {
+static void GenerateFastApiCall(MacroAssembler* masm,
+                                const CallOptimization& optimization,
+                                Handle<Map> receiver_map,
+                                Register receiver,
+                                Register scratch_in,
+                                int argc,
+                                Register* values) {
   ASSERT(!receiver.is(scratch_in));
   // Preparing to push, adjust sp.
   __ Subu(sp, sp, Operand((argc + 1) * kPointerSize));
@@ -844,7 +843,7 @@ void StubCompiler::GenerateFastApiCall(MacroAssembler* masm,
   __ li(api_function_address, Operand(ref));
 
   // Jump to stub.
-  CallApiFunctionStub stub(is_store, call_data_undefined, argc);
+  CallApiFunctionStub stub(true, call_data_undefined, argc);
   __ TailCallStub(&stub);
 }
 
@@ -868,6 +867,9 @@ Register StubCompiler::CheckPrototypes(Handle<HeapType> type,
                                        Label* miss,
                                        PrototypeCheckType check) {
   Handle<Map> receiver_map(IC::TypeToMap(*type, isolate()));
+  // Make sure that the type feedback oracle harvests the receiver map.
+  // TODO(svenpanne) Remove this hack when all ICs are reworked.
+  __ li(scratch1, Operand(receiver_map));
 
   // Make sure there's no overlap between holder and object registers.
   ASSERT(!scratch1.is(object_reg) && !scratch1.is(holder_reg));
@@ -1062,6 +1064,15 @@ void LoadStubCompiler::GenerateLoadConstant(Handle<Object> value) {
 
 
 void LoadStubCompiler::GenerateLoadCallback(
+    const CallOptimization& call_optimization,
+    Handle<Map> receiver_map) {
+  GenerateFastApiCall(
+      masm(), call_optimization, receiver_map,
+      receiver(), scratch3(), 0, NULL);
+}
+
+
+void LoadStubCompiler::GenerateLoadCallback(
     Register reg,
     Handle<ExecutableAccessorInfo> callback) {
   // Build AccessorInfo::args_ list on the stack and push property name below
@@ -1235,6 +1246,24 @@ Handle<Code> StoreStubCompiler::CompileStoreCallback(
 }
 
 
+Handle<Code> StoreStubCompiler::CompileStoreCallback(
+    Handle<JSObject> object,
+    Handle<JSObject> holder,
+    Handle<Name> name,
+    const CallOptimization& call_optimization) {
+  HandlerFrontend(IC::CurrentTypeOf(object, isolate()),
+                  receiver(), holder, name);
+
+  Register values[] = { value() };
+  GenerateFastApiCall(
+      masm(), call_optimization, handle(object->map()),
+      receiver(), scratch3(), 1, values);
+
+  // Return the generated code.
+  return GetCode(kind(), Code::FAST, name);
+}
+
+
 #undef __
 #define __ ACCESS_MASM(masm)
 
@@ -1242,16 +1271,20 @@ Handle<Code> StoreStubCompiler::CompileStoreCallback(
 void StoreStubCompiler::GenerateStoreViaSetter(
     MacroAssembler* masm,
     Handle<HeapType> type,
-    Register receiver,
     Handle<JSFunction> setter) {
   // ----------- S t a t e -------------
+  //  -- a0    : value
+  //  -- a1    : receiver
+  //  -- a2    : name
   //  -- ra    : return address
   // -----------------------------------
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
+    Register receiver = a1;
+    Register value = a0;
 
     // Save value register, so we can restore it later.
-    __ push(value());
+    __ push(value);
 
     if (!setter.is_null()) {
       // Call the JavaScript setter with receiver and value on the stack.
@@ -1261,7 +1294,7 @@ void StoreStubCompiler::GenerateStoreViaSetter(
                FieldMemOperand(
                    receiver, JSGlobalObject::kGlobalReceiverOffset));
       }
-      __ Push(receiver, value());
+      __ Push(receiver, value);
       ParameterCount actual(1);
       ParameterCount expected(setter);
       __ InvokeFunction(setter, expected, actual,
@@ -1289,12 +1322,31 @@ void StoreStubCompiler::GenerateStoreViaSetter(
 Handle<Code> StoreStubCompiler::CompileStoreInterceptor(
     Handle<JSObject> object,
     Handle<Name> name) {
+  Label miss;
+
+  // Check that the map of the object hasn't changed.
+  __ CheckMap(receiver(), scratch1(), Handle<Map>(object->map()), &miss,
+              DO_SMI_CHECK);
+
+  // Perform global security token check if needed.
+  if (object->IsJSGlobalProxy()) {
+    __ CheckAccessGlobalProxy(receiver(), scratch1(), &miss);
+  }
+
+  // Stub is never generated for non-global objects that require access
+  // checks.
+  ASSERT(object->IsJSGlobalProxy() || !object->IsAccessCheckNeeded());
+
   __ Push(receiver(), this->name(), value());
 
   // Do tail-call to the runtime system.
   ExternalReference store_ic_property =
       ExternalReference(IC_Utility(IC::kStoreInterceptorProperty), isolate());
   __ TailCallExternalReference(store_ic_property, 3, 1);
+
+  // Handle store cache miss.
+  __ bind(&miss);
+  TailCallBuiltin(masm(), MissBuiltin(kind()));
 
   // Return the generated code.
   return GetCode(kind(), Code::FAST, name);
@@ -1329,21 +1381,16 @@ Register* KeyedLoadStubCompiler::registers() {
 }
 
 
-Register StoreStubCompiler::value() {
-  return a0;
-}
-
-
 Register* StoreStubCompiler::registers() {
-  // receiver, name, scratch1, scratch2, scratch3.
-  static Register registers[] = { a1, a2, a3, t0, t1 };
+  // receiver, name, value, scratch1, scratch2, scratch3.
+  static Register registers[] = { a1, a2, a0, a3, t0, t1 };
   return registers;
 }
 
 
 Register* KeyedStoreStubCompiler::registers() {
-  // receiver, name, scratch1, scratch2, scratch3.
-  static Register registers[] = { a2, a1, a3, t0, t1 };
+  // receiver, name, value, scratch1, scratch2, scratch3.
+  static Register registers[] = { a2, a1, a0, a3, t0, t1 };
   return registers;
 }
 

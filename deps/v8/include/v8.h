@@ -576,7 +576,6 @@ template <class T> class PersistentBase {
   template<class F> friend class UniquePersistent;
   template<class F> friend class PersistentBase;
   template<class F> friend class ReturnValue;
-  friend class Object;
 
   explicit V8_INLINE PersistentBase(T* val) : val_(val) {}
   PersistentBase(PersistentBase& other); // NOLINT
@@ -1012,12 +1011,16 @@ class V8_EXPORT Script {
    * \param pre_data Pre-parsing data, as obtained by ScriptData::PreCompile()
    *   using pre_data speeds compilation if it's done multiple times.
    *   Owned by caller, no references are kept when New() returns.
+   * \param script_data Arbitrary data associated with script. Using
+   *   this has same effect as calling SetData(), but allows data to be
+   *   available to compile event handlers.
    * \return Compiled script object (context independent; when run it
    *   will use the currently entered context).
    */
   static Local<Script> New(Handle<String> source,
                            ScriptOrigin* origin = NULL,
-                           ScriptData* pre_data = NULL);
+                           ScriptData* pre_data = NULL,
+                           Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -1041,13 +1044,17 @@ class V8_EXPORT Script {
    * \param pre_data Pre-parsing data, as obtained by ScriptData::PreCompile()
    *   using pre_data speeds compilation if it's done multiple times.
    *   Owned by caller, no references are kept when Compile() returns.
+   * \param script_data Arbitrary data associated with script. Using
+   *   this has same effect as calling SetData(), but makes data available
+   *   earlier (i.e. to compile event handlers).
    * \return Compiled script object, bound to the context that was active
    *   when this function was called.  When run it will always use this
    *   context.
    */
   static Local<Script> Compile(Handle<String> source,
                                ScriptOrigin* origin = NULL,
-                               ScriptData* pre_data = NULL);
+                               ScriptData* pre_data = NULL,
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -1055,12 +1062,16 @@ class V8_EXPORT Script {
    *
    * \param source Script source code.
    * \param file_name File name to use as script's origin
+   * \param script_data Arbitrary data associated with script. Using
+   *   this has same effect as calling SetData(), but makes data available
+   *   earlier (i.e. to compile event handlers).
    * \return Compiled script object, bound to the context that was active
    *   when this function was called.  When run it will always use this
    *   context.
    */
   static Local<Script> Compile(Handle<String> source,
-                               Handle<Value> file_name);
+                               Handle<Value> file_name,
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Runs the script returning the resulting value.  If the script is
@@ -1075,6 +1086,13 @@ class V8_EXPORT Script {
    * Returns the script id.
    */
   int GetId();
+
+  /**
+   * Associate an additional data object with the script. This is mainly used
+   * with the debugger as this data object is only available through the
+   * debugger API.
+   */
+  void SetData(Handle<String> data);
 
   /**
    * Returns the name value of one Script.
@@ -1412,11 +1430,6 @@ class V8_EXPORT Value : public Data {
    */
   bool IsRegExp() const;
 
-  /**
-   * Returns true if this value is a Promise.
-   * This is an experimental feature.
-   */
-  bool IsPromise() const;
 
   /**
    * Returns true if this value is an ArrayBuffer.
@@ -1920,8 +1933,8 @@ class V8_EXPORT Private : public Data {
   Local<Value> Name() const;
 
   // Create a private symbol. If data is not NULL, it will be the print name.
-  static Local<Private> New(Isolate *isolate,
-                            Local<String> name = Local<String>());
+  static Local<Private> New(
+      Isolate *isolate, const char* data = NULL, int length = -1);
 
  private:
   Private();
@@ -2172,12 +2185,6 @@ class V8_EXPORT Object : public Value {
   /** Gets the number of internal fields for this Object. */
   int InternalFieldCount();
 
-  /** Same as above, but works for Persistents */
-  V8_INLINE static int InternalFieldCount(
-      const PersistentBase<Object>& object) {
-    return object.val_->InternalFieldCount();
-  }
-
   /** Gets the value from an internal field. */
   V8_INLINE Local<Value> GetInternalField(int index);
 
@@ -2190,12 +2197,6 @@ class V8_EXPORT Object : public Value {
    * leads to undefined behavior.
    */
   V8_INLINE void* GetAlignedPointerFromInternalField(int index);
-
-  /** Same as above, but works for Persistents */
-  V8_INLINE static void* GetAlignedPointerFromInternalField(
-      const PersistentBase<Object>& object, int index) {
-    return object.val_->GetAlignedPointerFromInternalField(index);
-  }
 
   /**
    * Sets a 2-byte-aligned native pointer in an internal field. To retrieve such
@@ -2540,42 +2541,6 @@ class V8_EXPORT Function : public Object {
   Function();
   static void CheckCast(Value* obj);
 };
-
-
-/**
- * An instance of the built-in Promise constructor (ES6 draft).
- * This API is experimental. Only works with --harmony flag.
- */
-class V8_EXPORT Promise : public Object {
- public:
-  /**
-   * Create a new Promise in pending state.
-   */
-  static Local<Promise> New(Isolate* isolate);
-
-  /**
-   * Resolve/reject a promise with a given value.
-   * Ignored if the promise is not unresolved.
-   */
-  void Resolve(Handle<Value> value);
-  void Reject(Handle<Value> value);
-
-  /**
-   * Register a resolution/rejection handler with a promise.
-   * The handler is given the respective resolution/rejection value as
-   * an argument. If the promise is already resolved/rejected, the handler is
-   * invoked at the end of turn.
-   */
-  Local<Promise> Chain(Handle<Function> handler);
-  Local<Promise> Catch(Handle<Function> handler);
-
-  V8_INLINE static Promise* Cast(Value* obj);
-
- private:
-  Promise();
-  static void CheckCast(Value* obj);
-};
-
 
 #ifndef V8_ARRAY_BUFFER_INTERNAL_FIELD_COUNT
 // The number of required internal fields can be defined by embedder.
@@ -3840,9 +3805,6 @@ typedef void (*FatalErrorCallback)(const char* location, const char* message);
 
 typedef void (*MessageCallback)(Handle<Message> message, Handle<Value> error);
 
-// --- Tracing ---
-
-typedef void (*LogEventCallback)(const char* name, int event);
 
 /**
  * Create new error objects by calling the corresponding error object
@@ -4228,11 +4190,6 @@ class V8_EXPORT Isolate {
    * instead to influence the garbage collection schedule.
    */
   void RequestGarbageCollectionForTesting(GarbageCollectionType type);
-
-  /**
-   * Set the callback to invoke for logging event.
-   */
-  void SetEventLogger(LogEventCallback that);
 
  private:
   Isolate();
@@ -4620,22 +4577,6 @@ class V8_EXPORT V8 {
    * Removes callback that was installed by AddCallCompletedCallback.
    */
   static void RemoveCallCompletedCallback(CallCompletedCallback callback);
-
-  /**
-   * Experimental: Runs the Microtask Work Queue until empty
-   */
-  static void RunMicrotasks(Isolate* isolate);
-
-  /**
-   * Experimental: Enqueues the callback to the Microtask Work Queue
-   */
-  static void EnqueueMicrotask(Isolate* isolate, Handle<Function> microtask);
-
-   /**
-   * Experimental: Controls whether the Microtask Work Queue is automatically
-   * run when the script call depth decrements to zero.
-   */
-  static void SetAutorunMicrotasks(Isolate *source, bool autorun);
 
   /**
    * Initializes from snapshot if possible. Otherwise, attempts to
@@ -5457,7 +5398,7 @@ class Internals {
   static const int kNullValueRootIndex = 7;
   static const int kTrueValueRootIndex = 8;
   static const int kFalseValueRootIndex = 9;
-  static const int kEmptyStringRootIndex = 144;
+  static const int kEmptyStringRootIndex = 147;
 
   static const int kNodeClassIdOffset = 1 * kApiPointerSize;
   static const int kNodeFlagsOffset = 1 * kApiPointerSize + 3;
@@ -6227,14 +6168,6 @@ Array* Array::Cast(v8::Value* value) {
   CheckCast(value);
 #endif
   return static_cast<Array*>(value);
-}
-
-
-Promise* Promise::Cast(v8::Value* value) {
-#ifdef V8_ENABLE_CHECKS
-  CheckCast(value);
-#endif
-  return static_cast<Promise*>(value);
 }
 
 

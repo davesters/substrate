@@ -81,15 +81,14 @@ bool MarkCompactCollector::IsMarked(Object* obj) {
 
 void MarkCompactCollector::RecordSlot(Object** anchor_slot,
                                       Object** slot,
-                                      Object* object,
-                                      SlotsBuffer::AdditionMode mode) {
+                                      Object* object) {
   Page* object_page = Page::FromAddress(reinterpret_cast<Address>(object));
   if (object_page->IsEvacuationCandidate() &&
       !ShouldSkipEvacuationSlotRecording(anchor_slot)) {
     if (!SlotsBuffer::AddTo(&slots_buffer_allocator_,
                             object_page->slots_buffer_address(),
                             slot,
-                            mode)) {
+                            SlotsBuffer::FAIL_ON_OVERFLOW)) {
       EvictEvacuationCandidate(object_page);
     }
   }

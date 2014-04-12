@@ -34,7 +34,6 @@
 #include "heap-profiler.h"
 #include "debug.h"
 #include "types.h"
-#include "v8conversions.h"
 
 namespace v8 {
 namespace internal {
@@ -73,16 +72,14 @@ HeapEntry::HeapEntry(HeapSnapshot* snapshot,
                      Type type,
                      const char* name,
                      SnapshotObjectId id,
-                     size_t self_size,
-                     unsigned trace_node_id)
+                     int self_size)
     : type_(type),
       children_count_(0),
       children_index_(-1),
       self_size_(self_size),
-      snapshot_(snapshot),
-      name_(name),
       id_(id),
-      trace_node_id_(trace_node_id) { }
+      snapshot_(snapshot),
+      name_(name) { }
 
 
 void HeapEntry::SetNamedReference(HeapGraphEdge::Type type,
@@ -106,7 +103,7 @@ void HeapEntry::SetIndexedReference(HeapGraphEdge::Type type,
 void HeapEntry::Print(
     const char* prefix, const char* edge_name, int max_depth, int indent) {
   STATIC_CHECK(sizeof(unsigned) == sizeof(id()));
-  OS::Print("%6" V8PRIuPTR " @%6u %*c %s%s: ",
+  OS::Print("%6d @%6u %*c %s%s: ",
             self_size(), id(), indent, ' ', prefix, edge_name);
   if (type() != kString) {
     OS::Print("%s %.40s\n", TypeAsString(), name_);
@@ -191,12 +188,12 @@ template <size_t ptr_size> struct SnapshotSizeConstants;
 
 template <> struct SnapshotSizeConstants<4> {
   static const int kExpectedHeapGraphEdgeSize = 12;
-  static const int kExpectedHeapEntrySize = 28;
+  static const int kExpectedHeapEntrySize = 24;
 };
 
 template <> struct SnapshotSizeConstants<8> {
   static const int kExpectedHeapGraphEdgeSize = 24;
-  static const int kExpectedHeapEntrySize = 40;
+  static const int kExpectedHeapEntrySize = 32;
 };
 
 }  // namespace
@@ -245,7 +242,6 @@ HeapEntry* HeapSnapshot::AddRootEntry() {
   HeapEntry* entry = AddEntry(HeapEntry::kSynthetic,
                               "",
                               HeapObjectsMap::kInternalRootObjectId,
-                              0,
                               0);
   root_index_ = entry->index();
   ASSERT(root_index_ == 0);
@@ -258,7 +254,6 @@ HeapEntry* HeapSnapshot::AddGcRootsEntry() {
   HeapEntry* entry = AddEntry(HeapEntry::kSynthetic,
                               "(GC roots)",
                               HeapObjectsMap::kGcRootsObjectId,
-                              0,
                               0);
   gc_roots_index_ = entry->index();
   return entry;
@@ -272,7 +267,6 @@ HeapEntry* HeapSnapshot::AddGcSubrootEntry(int tag) {
       HeapEntry::kSynthetic,
       VisitorSynchronization::kTagNames[tag],
       HeapObjectsMap::GetNthGcSubrootId(tag),
-      0,
       0);
   gc_subroot_indexes_[tag] = entry->index();
   return entry;
@@ -282,9 +276,8 @@ HeapEntry* HeapSnapshot::AddGcSubrootEntry(int tag) {
 HeapEntry* HeapSnapshot::AddEntry(HeapEntry::Type type,
                                   const char* name,
                                   SnapshotObjectId id,
-                                  size_t size,
-                                  unsigned trace_node_id) {
-  HeapEntry entry(this, type, name, id, size, trace_node_id);
+                                  int size) {
+  HeapEntry entry(this, type, name, id, size);
   entries_.Add(entry);
   return &entries_.last();
 }
@@ -396,10 +389,10 @@ HeapObjectsMap::HeapObjectsMap(Heap* heap)
 }
 
 
-bool HeapObjectsMap::MoveObject(Address from, Address to, int object_size) {
+void HeapObjectsMap::MoveObject(Address from, Address to, int object_size) {
   ASSERT(to != NULL);
   ASSERT(from != NULL);
-  if (from == to) return false;
+  if (from == to) return;
   void* from_value = entries_map_.Remove(from, ComputePointerHash(from));
   if (from_value == NULL) {
     // It may occur that some untracked object moves to an address X and there
@@ -440,7 +433,6 @@ bool HeapObjectsMap::MoveObject(Address from, Address to, int object_size) {
     entries_.at(from_entry_info_index).size = object_size;
     to_entry->value = from_value;
   }
-  return from_value != NULL;
 }
 
 
@@ -907,23 +899,10 @@ HeapEntry* V8HeapExplorer::AddEntry(HeapObject* object) {
 HeapEntry* V8HeapExplorer::AddEntry(HeapObject* object,
                                     HeapEntry::Type type,
                                     const char* name) {
-  return AddEntry(object->address(), type, name, object->Size());
-}
-
-
-HeapEntry* V8HeapExplorer::AddEntry(Address address,
-                                    HeapEntry::Type type,
-                                    const char* name,
-                                    size_t size) {
-  SnapshotObjectId object_id = heap_object_map_->FindOrAddEntry(
-      address, static_cast<unsigned int>(size));
-  unsigned trace_node_id = 0;
-  if (AllocationTracker* allocation_tracker =
-      snapshot_->profiler()->allocation_tracker()) {
-    trace_node_id =
-        allocation_tracker->address_to_trace()->GetTraceNodeId(address);
-  }
-  return snapshot_->AddEntry(type, name, object_id, size, trace_node_id);
+  int object_size = object->Size();
+  SnapshotObjectId object_id =
+      heap_object_map_->FindOrAddEntry(object->address(), object_size);
+  return snapshot_->AddEntry(type, name, object_id, object_size);
 }
 
 
@@ -1050,8 +1029,6 @@ void V8HeapExplorer::ExtractReferences(HeapObject* obj) {
 
   if (obj->IsJSGlobalProxy()) {
     ExtractJSGlobalProxyReferences(entry, JSGlobalProxy::cast(obj));
-  } else if (obj->IsJSArrayBuffer()) {
-    ExtractJSArrayBufferReferences(entry, JSArrayBuffer::cast(obj));
   } else if (obj->IsJSObject()) {
     ExtractJSObjectReferences(entry, JSObject::cast(obj));
   } else if (obj->IsString()) {
@@ -1170,6 +1147,13 @@ void V8HeapExplorer::ExtractJSObjectReferences(
                          JSArrayBufferView::kBufferOffset);
     SetWeakReference(view, entry, "weak_next", view->weak_next(),
                      JSArrayBufferView::kWeakNextOffset);
+  } else if (obj->IsJSArrayBuffer()) {
+    JSArrayBuffer* buffer = JSArrayBuffer::cast(obj);
+    SetWeakReference(buffer, entry, "weak_next", buffer->weak_next(),
+                     JSArrayBuffer::kWeakNextOffset);
+    SetWeakReference(buffer, entry,
+                     "weak_first_view", buffer->weak_first_view(),
+                     JSArrayBuffer::kWeakFirstViewOffset);
   }
   TagObject(js_obj->properties(), "(object properties)");
   SetInternalReference(obj, entry,
@@ -1340,9 +1324,6 @@ void V8HeapExplorer::ExtractSharedFunctionInfoReferences(
   SetInternalReference(obj, entry,
                        "optimized_code_map", shared->optimized_code_map(),
                        SharedFunctionInfo::kOptimizedCodeMapOffset);
-  SetInternalReference(obj, entry,
-                       "feedback_vector", shared->feedback_vector(),
-                       SharedFunctionInfo::kFeedbackVectorOffset);
   SetWeakReference(obj, entry,
                    "initial_map", shared->initial_map(),
                    SharedFunctionInfo::kInitialMapOffset);
@@ -1357,6 +1338,9 @@ void V8HeapExplorer::ExtractScriptReferences(int entry, Script* script) {
   SetInternalReference(obj, entry,
                        "name", script->name(),
                        Script::kNameOffset);
+  SetInternalReference(obj, entry,
+                       "data", script->data(),
+                       Script::kDataOffset);
   SetInternalReference(obj, entry,
                        "context_data", script->context_data(),
                        Script::kContextOffset);
@@ -1467,42 +1451,6 @@ void V8HeapExplorer::ExtractAllocationSiteReferences(int entry,
   // and we're not very interested in weak_next field here.
   STATIC_CHECK(AllocationSite::kWeakNextOffset >=
                AllocationSite::BodyDescriptor::kEndOffset);
-}
-
-
-class JSArrayBufferDataEntryAllocator : public HeapEntriesAllocator {
- public:
-  JSArrayBufferDataEntryAllocator(size_t size, V8HeapExplorer* explorer)
-      : size_(size)
-      , explorer_(explorer) {
-  }
-  virtual HeapEntry* AllocateEntry(HeapThing ptr) {
-    return explorer_->AddEntry(
-        static_cast<Address>(ptr),
-        HeapEntry::kNative, "system / JSArrayBufferData", size_);
-  }
- private:
-  size_t size_;
-  V8HeapExplorer* explorer_;
-};
-
-
-void V8HeapExplorer::ExtractJSArrayBufferReferences(
-    int entry, JSArrayBuffer* buffer) {
-  SetWeakReference(buffer, entry, "weak_next", buffer->weak_next(),
-                   JSArrayBuffer::kWeakNextOffset);
-  SetWeakReference(buffer, entry,
-                   "weak_first_view", buffer->weak_first_view(),
-                   JSArrayBuffer::kWeakFirstViewOffset);
-  // Setup a reference to a native memory backing_store object.
-  if (!buffer->backing_store())
-    return;
-  size_t data_size = NumberToSize(heap_->isolate(), buffer->byte_length());
-  JSArrayBufferDataEntryAllocator allocator(data_size, this);
-  HeapEntry* data_entry =
-      filler_->FindOrAddEntry(buffer->backing_store(), &allocator);
-  filler_->SetNamedReference(HeapGraphEdge::kInternal,
-                             entry, "backing_store", data_entry);
 }
 
 
@@ -2156,8 +2104,7 @@ HeapEntry* BasicHeapEntriesAllocator::AllocateEntry(HeapThing ptr) {
       entries_type_,
       name,
       heap_object_map_->GenerateId(info),
-      size != -1 ? static_cast<int>(size) : 0,
-      0);
+      size != -1 ? static_cast<int>(size) : 0);
 }
 
 
@@ -2656,8 +2603,8 @@ class OutputStreamWriter {
 
 // type, name|index, to_node.
 const int HeapSnapshotJSONSerializer::kEdgeFieldsCount = 3;
-// type, name, id, self_size, edge_count, trace_node_id.
-const int HeapSnapshotJSONSerializer::kNodeFieldsCount = 6;
+// type, name, id, self_size, children_index.
+const int HeapSnapshotJSONSerializer::kNodeFieldsCount = 5;
 
 void HeapSnapshotJSONSerializer::Serialize(v8::OutputStream* stream) {
   if (AllocationTracker* allocation_tracker =
@@ -2716,26 +2663,9 @@ int HeapSnapshotJSONSerializer::GetStringId(const char* s) {
 }
 
 
-namespace {
-
-template<size_t size> struct ToUnsigned;
-
-template<> struct ToUnsigned<4> {
-  typedef uint32_t Type;
-};
-
-template<> struct ToUnsigned<8> {
-  typedef uint64_t Type;
-};
-
-}  // namespace
-
-
-template<typename T>
-static int utoa_impl(T value, const Vector<char>& buffer, int buffer_pos) {
-  STATIC_CHECK(static_cast<T>(-1) > 0);  // Check that T is unsigned
+static int utoa(unsigned value, const Vector<char>& buffer, int buffer_pos) {
   int number_of_digits = 0;
-  T t = value;
+  unsigned t = value;
   do {
     ++number_of_digits;
   } while (t /= 10);
@@ -2743,19 +2673,11 @@ static int utoa_impl(T value, const Vector<char>& buffer, int buffer_pos) {
   buffer_pos += number_of_digits;
   int result = buffer_pos;
   do {
-    int last_digit = static_cast<int>(value % 10);
+    int last_digit = value % 10;
     buffer[--buffer_pos] = '0' + last_digit;
     value /= 10;
   } while (value);
   return result;
-}
-
-
-template<typename T>
-static int utoa(T value, const Vector<char>& buffer, int buffer_pos) {
-  typename ToUnsigned<sizeof(value)>::Type unsigned_value = value;
-  STATIC_CHECK(sizeof(value) == sizeof(unsigned_value));
-  return utoa_impl(unsigned_value, buffer, buffer_pos);
 }
 
 
@@ -2795,11 +2717,10 @@ void HeapSnapshotJSONSerializer::SerializeEdges() {
 
 
 void HeapSnapshotJSONSerializer::SerializeNode(HeapEntry* entry) {
-  // The buffer needs space for 4 unsigned ints, 1 size_t, 5 commas, \n and \0
+  // The buffer needs space for 5 unsigned ints, 5 commas, \n and \0
   static const int kBufferSize =
       5 * MaxDecimalDigitsIn<sizeof(unsigned)>::kUnsigned  // NOLINT
-      + MaxDecimalDigitsIn<sizeof(size_t)>::kUnsigned  // NOLINT
-      + 6 + 1 + 1;
+      + 5 + 1 + 1;
   EmbeddedVector<char, kBufferSize> buffer;
   int buffer_pos = 0;
   if (entry_index(entry) != 0) {
@@ -2814,8 +2735,6 @@ void HeapSnapshotJSONSerializer::SerializeNode(HeapEntry* entry) {
   buffer_pos = utoa(entry->self_size(), buffer, buffer_pos);
   buffer[buffer_pos++] = ',';
   buffer_pos = utoa(entry->children_count(), buffer, buffer_pos);
-  buffer[buffer_pos++] = ',';
-  buffer_pos = utoa(entry->trace_node_id(), buffer, buffer_pos);
   buffer[buffer_pos++] = '\n';
   buffer[buffer_pos++] = '\0';
   writer_->AddString(buffer.start());
@@ -2849,8 +2768,7 @@ void HeapSnapshotJSONSerializer::SerializeSnapshot() {
         JSON_S("name") ","
         JSON_S("id") ","
         JSON_S("self_size") ","
-        JSON_S("edge_count") ","
-        JSON_S("trace_node_id")) ","
+        JSON_S("edge_count")) ","
     JSON_S("node_types") ":" JSON_A(
         JSON_A(
             JSON_S("hidden") ","
@@ -2895,7 +2813,7 @@ void HeapSnapshotJSONSerializer::SerializeSnapshot() {
         JSON_S("column")) ","
     JSON_S("trace_node_fields") ":" JSON_A(
         JSON_S("id") ","
-        JSON_S("function_info_index") ","
+        JSON_S("function_id") ","
         JSON_S("count") ","
         JSON_S("size") ","
         JSON_S("children"))));
@@ -2910,7 +2828,7 @@ void HeapSnapshotJSONSerializer::SerializeSnapshot() {
   uint32_t count = 0;
   AllocationTracker* tracker = snapshot_->profiler()->allocation_tracker();
   if (tracker) {
-    count = tracker->function_info_list().length();
+    count = tracker->id_to_function_info()->occupancy();
   }
   writer_->AddNumber(count);
 }
@@ -2943,7 +2861,7 @@ void HeapSnapshotJSONSerializer::SerializeTraceNode(AllocationTraceNode* node) {
   int buffer_pos = 0;
   buffer_pos = utoa(node->id(), buffer, buffer_pos);
   buffer[buffer_pos++] = ',';
-  buffer_pos = utoa(node->function_info_index(), buffer, buffer_pos);
+  buffer_pos = utoa(node->function_id(), buffer, buffer_pos);
   buffer[buffer_pos++] = ',';
   buffer_pos = utoa(node->allocation_count(), buffer, buffer_pos);
   buffer[buffer_pos++] = ',';
@@ -2985,18 +2903,22 @@ void HeapSnapshotJSONSerializer::SerializeTraceNodeInfos() {
       6 * MaxDecimalDigitsIn<sizeof(unsigned)>::kUnsigned  // NOLINT
       + 6 + 1 + 1;
   EmbeddedVector<char, kBufferSize> buffer;
-  const List<AllocationTracker::FunctionInfo*>& list =
-      tracker->function_info_list();
+  HashMap* id_to_function_info = tracker->id_to_function_info();
   bool first_entry = true;
-  for (int i = 0; i < list.length(); i++) {
-    AllocationTracker::FunctionInfo* info = list[i];
+  for (HashMap::Entry* p = id_to_function_info->Start();
+       p != NULL;
+       p = id_to_function_info->Next(p)) {
+    SnapshotObjectId id =
+        static_cast<SnapshotObjectId>(reinterpret_cast<intptr_t>(p->key));
+    AllocationTracker::FunctionInfo* info =
+        reinterpret_cast<AllocationTracker::FunctionInfo* >(p->value);
     int buffer_pos = 0;
     if (first_entry) {
       first_entry = false;
     } else {
       buffer[buffer_pos++] = ',';
     }
-    buffer_pos = utoa(info->function_id, buffer, buffer_pos);
+    buffer_pos = utoa(id, buffer, buffer_pos);
     buffer[buffer_pos++] = ',';
     buffer_pos = utoa(GetStringId(info->name), buffer, buffer_pos);
     buffer[buffer_pos++] = ',';

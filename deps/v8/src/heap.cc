@@ -545,9 +545,7 @@ void Heap::ProcessPretenuringFeedback() {
       }
     }
 
-    if (trigger_deoptimization) {
-      isolate_->stack_guard()->DeoptMarkedAllocationSites();
-    }
+    if (trigger_deoptimization) isolate_->stack_guard()->DeoptMarkedCode();
 
     FlushAllocationSitesScratchpad();
 
@@ -569,25 +567,6 @@ void Heap::ProcessPretenuringFeedback() {
 }
 
 
-void Heap::DeoptMarkedAllocationSites() {
-  // TODO(hpayer): If iterating over the allocation sites list becomes a
-  // performance issue, use a cache heap data structure instead (similar to the
-  // allocation sites scratchpad).
-  Object* list_element = allocation_sites_list();
-  while (list_element->IsAllocationSite()) {
-    AllocationSite* site = AllocationSite::cast(list_element);
-    if (site->deopt_dependent_code()) {
-      site->dependent_code()->MarkCodeForDeoptimization(
-          isolate_,
-          DependentCode::kAllocationSiteTenuringChangedGroup);
-      site->set_deopt_dependent_code(false);
-    }
-    list_element = site->weak_next();
-  }
-  Deoptimizer::DeoptimizeMarkedCode(isolate_);
-}
-
-
 void Heap::GarbageCollectionEpilogue() {
   store_buffer()->GCEpilogue();
 
@@ -595,9 +574,6 @@ void Heap::GarbageCollectionEpilogue() {
   if (Heap::ShouldZapGarbage()) {
     ZapFromSpace();
   }
-
-  // Process pretenuring feedback and update allocation sites.
-  ProcessPretenuringFeedback();
 
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
@@ -773,21 +749,6 @@ void Heap::CollectAllAvailableGarbage(const char* gc_reason) {
 }
 
 
-void Heap::EnsureFillerObjectAtTop() {
-  // There may be an allocation memento behind every object in new space.
-  // If we evacuate a not full new space or if we are on the last page of
-  // the new space, then there may be uninitialized memory behind the top
-  // pointer of the new space page. We store a filler object there to
-  // identify the unused space.
-  Address from_top = new_space_.top();
-  Address from_limit = new_space_.limit();
-  if (from_top < from_limit) {
-    int remaining_in_page = static_cast<int>(from_limit - from_top);
-    CreateFillerObjectAt(from_top, remaining_in_page);
-  }
-}
-
-
 bool Heap::CollectGarbage(GarbageCollector collector,
                           const char* gc_reason,
                           const char* collector_reason,
@@ -804,7 +765,17 @@ bool Heap::CollectGarbage(GarbageCollector collector,
   allocation_timeout_ = Max(6, FLAG_gc_interval);
 #endif
 
-  EnsureFillerObjectAtTop();
+  // There may be an allocation memento behind every object in new space.
+  // If we evacuate a not full new space or if we are on the last page of
+  // the new space, then there may be uninitialized memory behind the top
+  // pointer of the new space page. We store a filler object there to
+  // identify the unused space.
+  Address from_top = new_space_.top();
+  Address from_limit = new_space_.limit();
+  if (from_top < from_limit) {
+    int remaining_in_page = static_cast<int>(from_limit - from_top);
+    CreateFillerObjectAt(from_top, remaining_in_page);
+  }
 
   if (collector == SCAVENGER && !incremental_marking()->IsStopped()) {
     if (FLAG_trace_incremental_marking) {
@@ -875,6 +846,16 @@ int Heap::NotifyContextDisposed() {
   flush_monomorphic_ics_ = true;
   AgeInlineCaches();
   return ++contexts_disposed_;
+}
+
+
+void Heap::PerformScavenge() {
+  GCTracer tracer(this, NULL, NULL);
+  if (incremental_marking()->IsStopped()) {
+    PerformGarbageCollection(SCAVENGER, &tracer);
+  } else {
+    PerformGarbageCollection(MARK_COMPACTOR, &tracer);
+  }
 }
 
 
@@ -1637,6 +1618,8 @@ void Heap::Scavenge() {
   IncrementYoungSurvivorsCounter(static_cast<int>(
       (PromotedSpaceSizeOfObjects() - survived_watermark) + new_space_.Size()));
 
+  ProcessPretenuringFeedback();
+
   LOG(isolate_, ResourceEvent("scavenge", "end"));
 
   gc_state_ = NOT_IN_GC;
@@ -2016,12 +1999,14 @@ void Heap::ResetAllAllocationSitesDependentCode(PretenureFlag flag) {
     AllocationSite* casted = AllocationSite::cast(cur);
     if (casted->GetPretenureMode() == flag) {
       casted->ResetPretenureDecision();
-      casted->set_deopt_dependent_code(true);
-      marked = true;
+      bool got_marked = casted->dependent_code()->MarkCodeForDeoptimization(
+          isolate_,
+          DependentCode::kAllocationSiteTenuringChangedGroup);
+      if (got_marked) marked = true;
     }
     cur = casted->weak_next();
   }
-  if (marked) isolate_->stack_guard()->DeoptMarkedAllocationSites();
+  if (marked) isolate_->stack_guard()->DeoptMarkedCode();
 }
 
 
@@ -2684,6 +2669,8 @@ MaybeObject* Heap::AllocateTypeFeedbackInfo() {
     if (!maybe_info->To(&info)) return maybe_info;
   }
   info->initialize_storage();
+  info->set_type_feedback_cells(TypeFeedbackCells::cast(empty_fixed_array()),
+                                SKIP_WRITE_BARRIER);
   return info;
 }
 
@@ -2866,7 +2853,7 @@ bool Heap::CreateInitialMaps() {
      TYPED_ARRAYS(ALLOCATE_FIXED_TYPED_ARRAY_MAP)
 #undef ALLOCATE_FIXED_TYPED_ARRAY_MAP
 
-    ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, sloppy_arguments_elements)
+    ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, non_strict_arguments_elements)
 
     ALLOCATE_VARSIZE_MAP(CODE_TYPE, code)
 
@@ -3065,17 +3052,6 @@ void Heap::CreateFixedStubs() {
   // The eliminates the need for doing dictionary lookup in the
   // stub cache for these stubs.
   HandleScope scope(isolate());
-
-  // Create stubs that should be there, so we don't unexpectedly have to
-  // create them if we need them during the creation of another stub.
-  // Stub creation mixes raw pointers and handles in an unsafe manner so
-  // we cannot create stubs while we are creating stubs.
-  CodeStub::GenerateStubsAheadOfTime(isolate());
-
-  // MacroAssembler::Abort calls (usually enabled with --debug-code) depend on
-  // CEntryStub, so we need to call GenerateStubsAheadOfTime before JSEntryStub
-  // is created.
-
   // gcc-4.4 has problem generating correct code of following snippet:
   // {  JSEntryStub stub;
   //    js_entry_code_ = *stub.GetCode();
@@ -3086,6 +3062,12 @@ void Heap::CreateFixedStubs() {
   // To workaround the problem, make separate functions without inlining.
   Heap::CreateJSEntryStub();
   Heap::CreateJSConstructEntryStub();
+
+  // Create stubs that should be there, so we don't unexpectedly have to
+  // create them if we need them during the creation of another stub.
+  // Stub creation mixes raw pointers and handles in an unsafe manner so
+  // we cannot create stubs while we are creating stubs.
+  CodeStub::GenerateStubsAheadOfTime(isolate());
 }
 
 
@@ -3287,15 +3269,6 @@ bool Heap::CreateInitialObjects() {
   }
   set_observation_state(JSObject::cast(obj));
 
-  // Allocate object to hold object microtask state.
-  { MaybeObject* maybe_obj = AllocateMap(JS_OBJECT_TYPE, JSObject::kHeaderSize);
-    if (!maybe_obj->ToObject(&obj)) return false;
-  }
-  { MaybeObject* maybe_obj = AllocateJSObjectFromMap(Map::cast(obj));
-    if (!maybe_obj->ToObject(&obj)) return false;
-  }
-  set_microtask_state(JSObject::cast(obj));
-
   { MaybeObject* maybe_obj = AllocateSymbol();
     if (!maybe_obj->ToObject(&obj)) return false;
   }
@@ -3306,25 +3279,7 @@ bool Heap::CreateInitialObjects() {
     if (!maybe_obj->ToObject(&obj)) return false;
   }
   Symbol::cast(obj)->set_is_private(true);
-  set_nonexistent_symbol(Symbol::cast(obj));
-
-  { MaybeObject* maybe_obj = AllocateSymbol();
-    if (!maybe_obj->ToObject(&obj)) return false;
-  }
-  Symbol::cast(obj)->set_is_private(true);
   set_elements_transition_symbol(Symbol::cast(obj));
-
-  { MaybeObject* maybe_obj = AllocateSymbol();
-    if (!maybe_obj->ToObject(&obj)) return false;
-  }
-  Symbol::cast(obj)->set_is_private(true);
-  set_uninitialized_symbol(Symbol::cast(obj));
-
-  { MaybeObject* maybe_obj = AllocateSymbol();
-    if (!maybe_obj->ToObject(&obj)) return false;
-  }
-  Symbol::cast(obj)->set_is_private(true);
-  set_megamorphic_symbol(Symbol::cast(obj));
 
   { MaybeObject* maybe_obj = SeededNumberDictionary::Allocate(this, 0, TENURED);
     if (!maybe_obj->ToObject(&obj)) return false;
@@ -3665,25 +3620,10 @@ void Heap::InitializeAllocationSitesScratchpad() {
 }
 
 
-void Heap::AddAllocationSiteToScratchpad(AllocationSite* site,
-                                         ScratchpadSlotMode mode) {
+void Heap::AddAllocationSiteToScratchpad(AllocationSite* site) {
   if (allocation_sites_scratchpad_length_ < kAllocationSiteScratchpadSize) {
-    // We cannot use the normal write-barrier because slots need to be
-    // recorded with non-incremental marking as well. We have to explicitly
-    // record the slot to take evacuation candidates into account.
     allocation_sites_scratchpad()->set(
-        allocation_sites_scratchpad_length_, site, SKIP_WRITE_BARRIER);
-    Object** slot = allocation_sites_scratchpad()->RawFieldOfElementAt(
-        allocation_sites_scratchpad_length_);
-
-    if (mode == RECORD_SCRATCHPAD_SLOT) {
-      // We need to allow slots buffer overflow here since the evacuation
-      // candidates are not part of the global list of old space pages and
-      // releasing an evacuation candidate due to a slots buffer overflow
-      // results in lost pages.
-      mark_compact_collector()->RecordSlot(
-          slot, slot, *slot, SlotsBuffer::IGNORE_OVERFLOW);
-    }
+        allocation_sites_scratchpad_length_, site);
     allocation_sites_scratchpad_length_++;
   }
 }
@@ -3805,7 +3745,6 @@ MaybeObject* Heap::AllocateSharedFunctionInfo(Object* name) {
   share->set_script(undefined_value(), SKIP_WRITE_BARRIER);
   share->set_debug_info(undefined_value(), SKIP_WRITE_BARRIER);
   share->set_inferred_name(empty_string(), SKIP_WRITE_BARRIER);
-  share->set_feedback_vector(empty_fixed_array(), SKIP_WRITE_BARRIER);
   share->set_initial_map(undefined_value(), SKIP_WRITE_BARRIER);
   share->set_ast_node_count(0);
   share->set_counters(0);
@@ -3831,6 +3770,7 @@ MaybeObject* Heap::AllocateJSMessageObject(String* type,
                                            int start_position,
                                            int end_position,
                                            Object* script,
+                                           Object* stack_trace,
                                            Object* stack_frames) {
   Object* result;
   { MaybeObject* maybe_result = Allocate(message_object_map(), NEW_SPACE);
@@ -3845,6 +3785,7 @@ MaybeObject* Heap::AllocateJSMessageObject(String* type,
   message->set_start_position(start_position);
   message->set_end_position(end_position);
   message->set_script(script);
+  message->set_stack_trace(stack_trace);
   message->set_stack_frames(stack_frames);
   return result;
 }
@@ -4214,8 +4155,28 @@ void Heap::InitializeAllocationMemento(AllocationMemento* memento,
 }
 
 
-MaybeObject* Heap::Allocate(Map* map, AllocationSpace space,
-                            AllocationSite* allocation_site) {
+MaybeObject* Heap::AllocateWithAllocationSite(Map* map, AllocationSpace space,
+    Handle<AllocationSite> allocation_site) {
+  ASSERT(gc_state_ == NOT_IN_GC);
+  ASSERT(map->instance_type() != MAP_TYPE);
+  // If allocation failures are disallowed, we may allocate in a different
+  // space when new space is full and the object is not a large object.
+  AllocationSpace retry_space =
+      (space != NEW_SPACE) ? space : TargetSpaceId(map->instance_type());
+  int size = map->instance_size() + AllocationMemento::kSize;
+  Object* result;
+  MaybeObject* maybe_result = AllocateRaw(size, space, retry_space);
+  if (!maybe_result->ToObject(&result)) return maybe_result;
+  // No need for write barrier since object is white and map is in old space.
+  HeapObject::cast(result)->set_map_no_write_barrier(map);
+  AllocationMemento* alloc_memento = reinterpret_cast<AllocationMemento*>(
+      reinterpret_cast<Address>(result) + map->instance_size());
+  InitializeAllocationMemento(alloc_memento, *allocation_site);
+  return result;
+}
+
+
+MaybeObject* Heap::Allocate(Map* map, AllocationSpace space) {
   ASSERT(gc_state_ == NOT_IN_GC);
   ASSERT(map->instance_type() != MAP_TYPE);
   // If allocation failures are disallowed, we may allocate in a different
@@ -4223,19 +4184,11 @@ MaybeObject* Heap::Allocate(Map* map, AllocationSpace space,
   AllocationSpace retry_space =
       (space != NEW_SPACE) ? space : TargetSpaceId(map->instance_type());
   int size = map->instance_size();
-  if (allocation_site != NULL) {
-    size += AllocationMemento::kSize;
-  }
   Object* result;
   MaybeObject* maybe_result = AllocateRaw(size, space, retry_space);
   if (!maybe_result->ToObject(&result)) return maybe_result;
   // No need for write barrier since object is white and map is in old space.
   HeapObject::cast(result)->set_map_no_write_barrier(map);
-  if (allocation_site != NULL) {
-    AllocationMemento* alloc_memento = reinterpret_cast<AllocationMemento*>(
-        reinterpret_cast<Address>(result) + map->instance_size());
-    InitializeAllocationMemento(alloc_memento, allocation_site);
-  }
   return result;
 }
 
@@ -4277,15 +4230,16 @@ MaybeObject* Heap::AllocateArgumentsObject(Object* callee, int length) {
   JSObject* boilerplate;
   int arguments_object_size;
   bool strict_mode_callee = callee->IsJSFunction() &&
-      JSFunction::cast(callee)->shared()->strict_mode() == STRICT;
+      !JSFunction::cast(callee)->shared()->is_classic_mode();
   if (strict_mode_callee) {
     boilerplate =
-        isolate()->context()->native_context()->strict_arguments_boilerplate();
-    arguments_object_size = kStrictArgumentsObjectSize;
+        isolate()->context()->native_context()->
+            strict_mode_arguments_boilerplate();
+    arguments_object_size = kArgumentsObjectSizeStrict;
   } else {
     boilerplate =
-        isolate()->context()->native_context()->sloppy_arguments_boilerplate();
-    arguments_object_size = kSloppyArgumentsObjectSize;
+        isolate()->context()->native_context()->arguments_boilerplate();
+    arguments_object_size = kArgumentsObjectSize;
   }
 
   // Check that the size of the boilerplate matches our
@@ -4311,7 +4265,7 @@ MaybeObject* Heap::AllocateArgumentsObject(Object* callee, int length) {
   JSObject::cast(result)->InObjectPropertyAtPut(kArgumentsLengthIndex,
                                                 Smi::FromInt(length),
                                                 SKIP_WRITE_BARRIER);
-  // Set the callee property for sloppy mode arguments object only.
+  // Set the callee property for non-strict mode arguments object only.
   if (!strict_mode_callee) {
     JSObject::cast(result)->InObjectPropertyAtPut(kArgumentsCalleeIndex,
                                                   callee);
@@ -4358,10 +4312,7 @@ void Heap::InitializeJSObjectFromMap(JSObject* obj,
 
 
 MaybeObject* Heap::AllocateJSObjectFromMap(
-    Map* map,
-    PretenureFlag pretenure,
-    bool allocate_properties,
-    AllocationSite* allocation_site) {
+    Map* map, PretenureFlag pretenure, bool allocate_properties) {
   // JSFunctions should be allocated using AllocateFunction to be
   // properly initialized.
   ASSERT(map->instance_type() != JS_FUNCTION_TYPE);
@@ -4387,7 +4338,7 @@ MaybeObject* Heap::AllocateJSObjectFromMap(
   int size = map->instance_size();
   AllocationSpace space = SelectSpace(size, OLD_POINTER_SPACE, pretenure);
   Object* obj;
-  MaybeObject* maybe_obj = Allocate(map, space, allocation_site);
+  MaybeObject* maybe_obj = Allocate(map, space);
   if (!maybe_obj->To(&obj)) return maybe_obj;
 
   // Initialize the JSObject.
@@ -4398,16 +4349,79 @@ MaybeObject* Heap::AllocateJSObjectFromMap(
 }
 
 
-MaybeObject* Heap::AllocateJSObject(JSFunction* constructor,
-                                    PretenureFlag pretenure,
-                                    AllocationSite* allocation_site) {
-  ASSERT(constructor->has_initial_map());
+MaybeObject* Heap::AllocateJSObjectFromMapWithAllocationSite(
+    Map* map, Handle<AllocationSite> allocation_site) {
+  // JSFunctions should be allocated using AllocateFunction to be
+  // properly initialized.
+  ASSERT(map->instance_type() != JS_FUNCTION_TYPE);
 
+  // Both types of global objects should be allocated using
+  // AllocateGlobalObject to be properly initialized.
+  ASSERT(map->instance_type() != JS_GLOBAL_OBJECT_TYPE);
+  ASSERT(map->instance_type() != JS_BUILTINS_OBJECT_TYPE);
+
+  // Allocate the backing storage for the properties.
+  int prop_size = map->InitialPropertiesLength();
+  ASSERT(prop_size >= 0);
+  FixedArray* properties;
+  { MaybeObject* maybe_properties = AllocateFixedArray(prop_size);
+    if (!maybe_properties->To(&properties)) return maybe_properties;
+  }
+
+  // Allocate the JSObject.
+  int size = map->instance_size();
+  AllocationSpace space = SelectSpace(size, OLD_POINTER_SPACE, NOT_TENURED);
+  Object* obj;
+  MaybeObject* maybe_obj =
+      AllocateWithAllocationSite(map, space, allocation_site);
+  if (!maybe_obj->To(&obj)) return maybe_obj;
+
+  // Initialize the JSObject.
+  InitializeJSObjectFromMap(JSObject::cast(obj), properties, map);
+  ASSERT(JSObject::cast(obj)->HasFastElements());
+  return obj;
+}
+
+
+MaybeObject* Heap::AllocateJSObject(JSFunction* constructor,
+                                    PretenureFlag pretenure) {
+  ASSERT(constructor->has_initial_map());
   // Allocate the object based on the constructors initial map.
-  MaybeObject* result = AllocateJSObjectFromMap(constructor->initial_map(),
-                                                pretenure,
-                                                true,
-                                                allocation_site);
+  MaybeObject* result = AllocateJSObjectFromMap(
+      constructor->initial_map(), pretenure);
+#ifdef DEBUG
+  // Make sure result is NOT a global object if valid.
+  Object* non_failure;
+  ASSERT(!result->ToObject(&non_failure) || !non_failure->IsGlobalObject());
+#endif
+  return result;
+}
+
+
+MaybeObject* Heap::AllocateJSObjectWithAllocationSite(JSFunction* constructor,
+    Handle<AllocationSite> allocation_site) {
+  ASSERT(constructor->has_initial_map());
+  // Allocate the object based on the constructors initial map, or the payload
+  // advice
+  Map* initial_map = constructor->initial_map();
+
+  ElementsKind to_kind = allocation_site->GetElementsKind();
+  AllocationSiteMode mode = TRACK_ALLOCATION_SITE;
+  if (to_kind != initial_map->elements_kind()) {
+    MaybeObject* maybe_new_map = initial_map->AsElementsKind(to_kind);
+    if (!maybe_new_map->To(&initial_map)) return maybe_new_map;
+    // Possibly alter the mode, since we found an updated elements kind
+    // in the type info cell.
+    mode = AllocationSite::GetMode(to_kind);
+  }
+
+  MaybeObject* result;
+  if (mode == TRACK_ALLOCATION_SITE) {
+    result = AllocateJSObjectFromMapWithAllocationSite(initial_map,
+        allocation_site);
+  } else {
+    result = AllocateJSObjectFromMap(initial_map, NOT_TENURED);
+  }
 #ifdef DEBUG
   // Make sure result is NOT a global object if valid.
   Object* non_failure;
@@ -5083,23 +5097,20 @@ MaybeObject* Heap::CopyFixedDoubleArrayWithMap(FixedDoubleArray* src,
 MaybeObject* Heap::CopyConstantPoolArrayWithMap(ConstantPoolArray* src,
                                                 Map* map) {
   int int64_entries = src->count_of_int64_entries();
-  int code_ptr_entries = src->count_of_code_ptr_entries();
-  int heap_ptr_entries = src->count_of_heap_ptr_entries();
+  int ptr_entries = src->count_of_ptr_entries();
   int int32_entries = src->count_of_int32_entries();
   Object* obj;
   { MaybeObject* maybe_obj =
-        AllocateConstantPoolArray(int64_entries, code_ptr_entries,
-                                  heap_ptr_entries, int32_entries);
+        AllocateConstantPoolArray(int64_entries, ptr_entries, int32_entries);
     if (!maybe_obj->ToObject(&obj)) return maybe_obj;
   }
   HeapObject* dst = HeapObject::cast(obj);
   dst->set_map_no_write_barrier(map);
-  int size = ConstantPoolArray::SizeFor(
-        int64_entries, code_ptr_entries, heap_ptr_entries, int32_entries);
   CopyBlock(
       dst->address() + ConstantPoolArray::kLengthOffset,
       src->address() + ConstantPoolArray::kLengthOffset,
-      size - ConstantPoolArray::kLengthOffset);
+      ConstantPoolArray::SizeFor(int64_entries, ptr_entries, int32_entries)
+          - ConstantPoolArray::kLengthOffset);
   return obj;
 }
 
@@ -5236,14 +5247,12 @@ MaybeObject* Heap::AllocateRawFixedDoubleArray(int length,
 
 
 MaybeObject* Heap::AllocateConstantPoolArray(int number_of_int64_entries,
-                                             int number_of_code_ptr_entries,
-                                             int number_of_heap_ptr_entries,
+                                             int number_of_ptr_entries,
                                              int number_of_int32_entries) {
-  ASSERT(number_of_int64_entries > 0 || number_of_code_ptr_entries > 0 ||
-         number_of_heap_ptr_entries > 0 || number_of_int32_entries > 0);
+  ASSERT(number_of_int64_entries > 0 || number_of_ptr_entries > 0 ||
+         number_of_int32_entries > 0);
   int size = ConstantPoolArray::SizeFor(number_of_int64_entries,
-                                        number_of_code_ptr_entries,
-                                        number_of_heap_ptr_entries,
+                                        number_of_ptr_entries,
                                         number_of_int32_entries);
 #ifndef V8_HOST_ARCH_64_BIT
   size += kPointerSize;
@@ -5260,38 +5269,29 @@ MaybeObject* Heap::AllocateConstantPoolArray(int number_of_int64_entries,
   ConstantPoolArray* constant_pool =
       reinterpret_cast<ConstantPoolArray*>(object);
   constant_pool->SetEntryCounts(number_of_int64_entries,
-                                number_of_code_ptr_entries,
-                                number_of_heap_ptr_entries,
+                                number_of_ptr_entries,
                                 number_of_int32_entries);
-  if (number_of_code_ptr_entries > 0) {
-    int offset =
-        constant_pool->OffsetOfElementAt(constant_pool->first_code_ptr_index());
+  if (number_of_ptr_entries > 0) {
     MemsetPointer(
-        reinterpret_cast<Address*>(HeapObject::RawField(constant_pool, offset)),
-        isolate()->builtins()->builtin(Builtins::kIllegal)->entry(),
-        number_of_code_ptr_entries);
-  }
-  if (number_of_heap_ptr_entries > 0) {
-    int offset =
-        constant_pool->OffsetOfElementAt(constant_pool->first_code_ptr_index());
-    MemsetPointer(
-        HeapObject::RawField(constant_pool, offset),
+        HeapObject::RawField(
+            constant_pool,
+            constant_pool->OffsetOfElementAt(constant_pool->first_ptr_index())),
         undefined_value(),
-        number_of_heap_ptr_entries);
+        number_of_ptr_entries);
   }
   return constant_pool;
 }
 
 
 MaybeObject* Heap::AllocateEmptyConstantPoolArray() {
-  int size = ConstantPoolArray::SizeFor(0, 0, 0, 0);
+  int size = ConstantPoolArray::SizeFor(0, 0, 0);
   Object* result;
   { MaybeObject* maybe_result =
         AllocateRaw(size, OLD_DATA_SPACE, OLD_DATA_SPACE);
     if (!maybe_result->ToObject(&result)) return maybe_result;
   }
   HeapObject::cast(result)->set_map_no_write_barrier(constant_pool_array_map());
-  ConstantPoolArray::cast(result)->SetEntryCounts(0, 0, 0, 0);
+  ConstantPoolArray::cast(result)->SetEntryCounts(0, 0, 0);
   return result;
 }
 
@@ -5823,9 +5823,6 @@ void Heap::Verify() {
   VerifyPointersVisitor visitor;
   IterateRoots(&visitor, VISIT_ONLY_STRONG);
 
-  VerifySmisVisitor smis_visitor;
-  IterateSmiRoots(&smis_visitor);
-
   new_space_.Verify();
 
   old_pointer_space_->Verify(&visitor);
@@ -6123,12 +6120,6 @@ void Heap::IterateWeakRoots(ObjectVisitor* v, VisitMode mode) {
 }
 
 
-void Heap::IterateSmiRoots(ObjectVisitor* v) {
-  v->VisitPointers(&roots_[kSmiRootsStart], &roots_[kRootListLength]);
-  v->Synchronize(VisitorSynchronization::kSmiRootList);
-}
-
-
 void Heap::IterateStrongRoots(ObjectVisitor* v, VisitMode mode) {
   v->VisitPointers(&roots_[0], &roots_[kStrongRootListLength]);
   v->Synchronize(VisitorSynchronization::kStrongRootList);
@@ -6351,7 +6342,7 @@ intptr_t Heap::PromotedSpaceSizeOfObjects() {
 
 
 bool Heap::AdvanceSweepers(int step_size) {
-  ASSERT(!mark_compact_collector()->AreSweeperThreadsActivated());
+  ASSERT(isolate()->num_sweeper_threads() == 0);
   bool sweeping_complete = old_data_space()->AdvanceSweeper(step_size);
   sweeping_complete &= old_pointer_space()->AdvanceSweeper(step_size);
   return sweeping_complete;

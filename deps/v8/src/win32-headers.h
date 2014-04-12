@@ -94,7 +94,6 @@
 #undef NONE
 #undef ANY
 #undef IGNORE
-#undef STRICT
 #undef GetObject
 #undef CreateSemaphore
 #undef Yield

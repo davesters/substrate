@@ -1124,14 +1124,8 @@ void Logger::LeaveExternal(Isolate* isolate) {
 }
 
 
-void Logger::LogInternalEvents(const char* name, int se) {
-  Isolate* isolate = Isolate::Current();
-  LOG(isolate, TimerEvent(static_cast<StartEnd>(se), name));
-}
-
-
 void Logger::TimerEventScope::LogTimerEvent(StartEnd se) {
-  isolate_->event_logger()(name_, se);
+  LOG(isolate_, TimerEvent(se, name_));
 }
 
 

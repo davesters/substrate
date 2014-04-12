@@ -61,8 +61,7 @@ class Factory {
 
   Handle<ConstantPoolArray> NewConstantPoolArray(
       int number_of_int64_entries,
-      int number_of_code_ptr_entries,
-      int number_of_heap_ptr_entries,
+      int number_of_ptr_entries,
       int number_of_int32_entries);
 
   Handle<SeededNumberDictionary> NewSeededNumberDictionary(
@@ -226,6 +225,9 @@ class Factory {
                                   Handle<Context> previous,
                                   Handle<ScopeInfo> scope_info);
 
+  // Return the internalized version of the passed in string.
+  Handle<String> InternalizedStringFromString(Handle<String> value);
+
   // Allocate a new struct.  The struct is pretenured (allocated directly in
   // the old generation).
   Handle<Struct> NewStruct(InstanceType type);
@@ -377,7 +379,7 @@ class Factory {
 
   Handle<JSFunction> NewFunctionWithoutPrototype(
       Handle<String> name,
-      StrictMode strict_mode);
+      LanguageMode language_mode);
 
   Handle<JSFunction> NewFunction(Handle<Object> super, bool is_global);
 
@@ -517,8 +519,7 @@ class Factory {
       int number_of_literals,
       bool is_generator,
       Handle<Code> code,
-      Handle<ScopeInfo> scope_info,
-      Handle<FixedArray> feedback_vector);
+      Handle<ScopeInfo> scope_info);
   Handle<SharedFunctionInfo> NewSharedFunctionInfo(Handle<String> name);
 
   Handle<JSMessageObject> NewJSMessageObject(
@@ -527,6 +528,7 @@ class Factory {
       int start_position,
       int end_position,
       Handle<Object> script,
+      Handle<Object> stack_trace,
       Handle<Object> stack_frames);
 
   Handle<SeededNumberDictionary> DictionaryAtNumberPut(
@@ -580,7 +582,7 @@ class Factory {
 
   Handle<JSFunction> NewFunctionWithoutPrototypeHelper(
       Handle<String> name,
-      StrictMode strict_mode);
+      LanguageMode language_mode);
 
   // Create a new map cache.
   Handle<MapCache> NewMapCache(int at_least_space_for);

@@ -78,7 +78,7 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope, Zone* zone) {
   // Encode the flags.
   int flags = ScopeTypeField::encode(scope->scope_type()) |
       CallsEvalField::encode(scope->calls_eval()) |
-      StrictModeField::encode(scope->strict_mode()) |
+      LanguageModeField::encode(scope->language_mode()) |
       FunctionVariableField::encode(function_name_info) |
       FunctionVariableMode::encode(function_variable_mode);
   scope_info->SetFlags(flags);
@@ -164,8 +164,8 @@ bool ScopeInfo::CallsEval() {
 }
 
 
-StrictMode ScopeInfo::strict_mode() {
-  return length() > 0 ? StrictModeField::decode(Flags()) : SLOPPY;
+LanguageMode ScopeInfo::language_mode() {
+  return length() > 0 ? LanguageModeField::decode(Flags()) : CLASSIC_MODE;
 }
 
 
@@ -378,7 +378,7 @@ bool ScopeInfo::CopyContextLocalsToScopeObject(Handle<ScopeInfo> scope_info,
         Handle<String>(String::cast(scope_info->get(i))),
         Handle<Object>(context->get(context_index), isolate),
         ::NONE,
-        SLOPPY);
+        kNonStrictMode);
     RETURN_IF_EMPTY_HANDLE_VALUE(isolate, result, false);
   }
   return true;

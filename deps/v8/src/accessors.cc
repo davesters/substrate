@@ -351,6 +351,26 @@ const AccessorDescriptor Accessors::ScriptColumnOffset = {
 
 
 //
+// Accessors::ScriptData
+//
+
+
+MaybeObject* Accessors::ScriptGetData(Isolate* isolate,
+                                      Object* object,
+                                      void*) {
+  Object* script = JSValue::cast(object)->value();
+  return Script::cast(script)->data();
+}
+
+
+const AccessorDescriptor Accessors::ScriptData = {
+  ScriptGetData,
+  IllegalSetter,
+  0
+};
+
+
+//
 // Accessors::ScriptType
 //
 
@@ -891,10 +911,10 @@ MaybeObject* Accessors::FunctionGetCaller(Isolate* isolate,
   if (caller->shared()->bound()) {
     return isolate->heap()->null_value();
   }
-  // Censor if the caller is not a sloppy mode function.
+  // Censor if the caller is not a classic mode function.
   // Change from ES5, which used to throw, see:
   // https://bugs.ecmascript.org/show_bug.cgi?id=310
-  if (caller->shared()->strict_mode() == STRICT) {
+  if (!caller->shared()->is_classic_mode()) {
     return isolate->heap()->null_value();
   }
 

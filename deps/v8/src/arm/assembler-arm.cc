@@ -300,11 +300,6 @@ bool RelocInfo::IsCodedSpecially() {
 }
 
 
-bool RelocInfo::IsInConstantPool() {
-  return Assembler::IsLdrPcImmediateOffset(Memory::int32_at(pc_));
-}
-
-
 void RelocInfo::PatchCode(byte* instructions, int instruction_count) {
   // Patch the code at the current address with the supplied instructions.
   Instr* pc = reinterpret_cast<Instr*>(pc_);
@@ -1059,19 +1054,14 @@ bool Operand::must_output_reloc_info(const Assembler* assembler) const {
 }
 
 
-static bool use_mov_immediate_load(const Operand& x,
-                                   const Assembler* assembler) {
-  if (CpuFeatures::IsSupported(MOVW_MOVT_IMMEDIATE_LOADS) &&
-             (assembler == NULL || !assembler->predictable_code_size())) {
-    // Prefer movw / movt to constant pool if it is more efficient on the CPU.
+static bool use_movw_movt(const Operand& x, const Assembler* assembler) {
+  if (Assembler::use_immediate_embedded_pointer_loads(assembler)) {
     return true;
-  } else if (x.must_output_reloc_info(assembler)) {
-    // Prefer constant pool if data is likely to be patched.
-    return false;
-  } else {
-    // Otherwise, use immediate load if movw / movt is available.
-    return CpuFeatures::IsSupported(ARMv7);
   }
+  if (x.must_output_reloc_info(assembler)) {
+    return false;
+  }
+  return CpuFeatures::IsSupported(ARMv7);
 }
 
 
@@ -1085,7 +1075,7 @@ bool Operand::is_single_instruction(const Assembler* assembler,
     // constant pool is required. For a mov instruction not setting the
     // condition code additional instruction conventions can be used.
     if ((instr & ~kCondMask) == 13*B21) {  // mov, S not set
-      return !use_mov_immediate_load(*this, assembler);
+      return !use_movw_movt(*this, assembler);
     } else {
       // If this is not a mov or mvn instruction there will always an additional
       // instructions - either mov or ldr. The mov might actually be two
@@ -1101,11 +1091,12 @@ bool Operand::is_single_instruction(const Assembler* assembler,
 }
 
 
-void Assembler::move_32_bit_immediate(Register rd,
-                                      const Operand& x,
-                                      Condition cond) {
-  if (rd.code() != pc.code()) {
-    if (use_mov_immediate_load(x, this)) {
+void Assembler::move_32_bit_immediate(Condition cond,
+                                      Register rd,
+                                      SBit s,
+                                      const Operand& x) {
+  if (rd.code() != pc.code() && s == LeaveCC) {
+    if (use_movw_movt(x, this)) {
       if (x.must_output_reloc_info(this)) {
         RecordRelocInfo(x.rmode_, x.imm32_, DONT_USE_CONSTANT_POOL);
         // Make sure the movw/movt doesn't get separated.
@@ -1142,9 +1133,20 @@ void Assembler::addrmod1(Instr instr,
       CHECK(!rn.is(ip));  // rn should never be ip, or will be trashed
       Condition cond = Instruction::ConditionField(instr);
       if ((instr & ~kCondMask) == 13*B21) {  // mov, S not set
-        move_32_bit_immediate(rd, x, cond);
+        move_32_bit_immediate(cond, rd, LeaveCC, x);
       } else {
-        mov(ip, x, LeaveCC, cond);
+        if ((instr & kMovMvnMask) == kMovMvnPattern) {
+          // Moves need to use a constant pool entry.
+          RecordRelocInfo(x.rmode_, x.imm32_, USE_CONSTANT_POOL);
+          ldr(ip, MemOperand(pc, 0), cond);
+        } else if (x.must_output_reloc_info(this)) {
+          // Otherwise, use most efficient form of fetching from constant pool.
+          move_32_bit_immediate(cond, ip, LeaveCC, x);
+        } else {
+          // If this is not a mov or mvn instruction we may still be able to
+          // avoid a constant pool entry by using mvn or movw.
+          mov(ip, x, LeaveCC, cond);
+        }
         addrmod1(instr, rn, rd, Operand(ip));
       }
       return;
@@ -1812,7 +1814,8 @@ void Assembler::msr(SRegisterFieldMask fields, const Operand& src,
     if (src.must_output_reloc_info(this) ||
         !fits_shifter(src.imm32_, &rotate_imm, &immed_8, NULL)) {
       // Immediate operand cannot be encoded, load it first to register ip.
-      move_32_bit_immediate(ip, src);
+      RecordRelocInfo(src.rmode_, src.imm32_);
+      ldr(ip, MemOperand(pc, 0), cond);
       msr(fields, Operand(ip), cond);
       return;
     }

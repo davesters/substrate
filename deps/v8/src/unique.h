@@ -142,12 +142,8 @@ class Unique V8_FINAL {
   friend class Unique;  // For comparing raw_address values.
 
  private:
-  Unique<T>() : raw_address_(NULL) { }
-
   Address raw_address_;
   Handle<T> handle_;
-
-  friend class SideEffectsTracker;
 };
 
 

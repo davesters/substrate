@@ -114,16 +114,14 @@ class HeapEntry BASE_EMBEDDED {
             Type type,
             const char* name,
             SnapshotObjectId id,
-            size_t self_size,
-            unsigned trace_node_id);
+            int self_size);
 
   HeapSnapshot* snapshot() { return snapshot_; }
   Type type() { return static_cast<Type>(type_); }
   const char* name() { return name_; }
   void set_name(const char* name) { name_ = name; }
   inline SnapshotObjectId id() { return id_; }
-  size_t self_size() { return self_size_; }
-  unsigned trace_node_id() const { return trace_node_id_; }
+  int self_size() { return self_size_; }
   INLINE(int index() const);
   int children_count() const { return children_count_; }
   INLINE(int set_children_index(int index));
@@ -148,12 +146,10 @@ class HeapEntry BASE_EMBEDDED {
   unsigned type_: 4;
   int children_count_: 28;
   int children_index_;
-  size_t self_size_;
+  int self_size_;
+  SnapshotObjectId id_;
   HeapSnapshot* snapshot_;
   const char* name_;
-  SnapshotObjectId id_;
-  // id of allocation stack trace top node
-  unsigned trace_node_id_;
 };
 
 
@@ -190,8 +186,7 @@ class HeapSnapshot {
   HeapEntry* AddEntry(HeapEntry::Type type,
                       const char* name,
                       SnapshotObjectId id,
-                      size_t size,
-                      unsigned trace_node_id);
+                      int size);
   HeapEntry* AddRootEntry();
   HeapEntry* AddGcRootsEntry();
   HeapEntry* AddGcSubrootEntry(int tag);
@@ -233,7 +228,7 @@ class HeapObjectsMap {
   SnapshotObjectId FindOrAddEntry(Address addr,
                                   unsigned int size,
                                   bool accessed = true);
-  bool MoveObject(Address from, Address to, int size);
+  void MoveObject(Address from, Address to, int size);
   void UpdateObjectSize(Address addr, int size);
   SnapshotObjectId last_assigned_id() const {
     return next_id_ - kObjectIdStep;
@@ -391,10 +386,6 @@ class V8HeapExplorer : public HeapEntriesAllocator {
   void TagGlobalObjects();
   void TagCodeObject(Code* code);
   void TagBuiltinCodeObject(Code* code, const char* name);
-  HeapEntry* AddEntry(Address address,
-                      HeapEntry::Type type,
-                      const char* name,
-                      size_t size);
 
   static String* GetConstructorName(JSObject* object);
 
@@ -405,7 +396,6 @@ class V8HeapExplorer : public HeapEntriesAllocator {
   HeapEntry* AddEntry(HeapObject* object,
                       HeapEntry::Type type,
                       const char* name);
-
   const char* GetSystemEntryName(HeapObject* object);
 
   void ExtractReferences(HeapObject* obj);
@@ -424,7 +414,6 @@ class V8HeapExplorer : public HeapEntriesAllocator {
   void ExtractCellReferences(int entry, Cell* cell);
   void ExtractPropertyCellReferences(int entry, PropertyCell* cell);
   void ExtractAllocationSiteReferences(int entry, AllocationSite* site);
-  void ExtractJSArrayBufferReferences(int entry, JSArrayBuffer* buffer);
   void ExtractClosureReferences(JSObject* js_obj, int entry);
   void ExtractPropertyReferences(JSObject* js_obj, int entry);
   bool ExtractAccessorPairProperty(JSObject* js_obj, int entry,

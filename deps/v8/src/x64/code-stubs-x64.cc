@@ -106,8 +106,8 @@ void FastCloneShallowObjectStub::InitializeInterfaceDescriptor(
 void CreateAllocationSiteStub::InitializeInterfaceDescriptor(
     Isolate* isolate,
     CodeStubInterfaceDescriptor* descriptor) {
-  static Register registers[] = { rbx, rdx };
-  descriptor->register_param_count_ = 2;
+  static Register registers[] = { rbx };
+  descriptor->register_param_count_ = 1;
   descriptor->register_params_ = registers;
   descriptor->deoptimization_handler_ = NULL;
 }
@@ -1062,7 +1062,7 @@ void ArgumentsAccessStub::GenerateReadElement(MacroAssembler* masm) {
 }
 
 
-void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
+void ArgumentsAccessStub::GenerateNewNonStrictFast(MacroAssembler* masm) {
   // Stack layout:
   //  rsp[0]  : return address
   //  rsp[8]  : number of parameters (tagged)
@@ -1123,7 +1123,7 @@ void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
   __ lea(r8, Operand(r8, rcx, times_pointer_size, FixedArray::kHeaderSize));
 
   // 3. Arguments object.
-  __ addq(r8, Immediate(Heap::kSloppyArgumentsObjectSize));
+  __ addq(r8, Immediate(Heap::kArgumentsObjectSize));
 
   // Do the allocation of all three objects in one go.
   __ Allocate(r8, rax, rdx, rdi, &runtime, TAG_OBJECT);
@@ -1137,7 +1137,7 @@ void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
   __ testq(rbx, rbx);
   __ j(not_zero, &has_mapped_parameters, Label::kNear);
 
-  const int kIndex = Context::SLOPPY_ARGUMENTS_BOILERPLATE_INDEX;
+  const int kIndex = Context::ARGUMENTS_BOILERPLATE_INDEX;
   __ movp(rdi, Operand(rdi, Context::SlotOffset(kIndex)));
   __ jmp(&copy, Label::kNear);
 
@@ -1174,7 +1174,7 @@ void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
   // Set up the elements pointer in the allocated arguments object.
   // If we allocated a parameter map, edi will point there, otherwise to the
   // backing store.
-  __ lea(rdi, Operand(rax, Heap::kSloppyArgumentsObjectSize));
+  __ lea(rdi, Operand(rax, Heap::kArgumentsObjectSize));
   __ movp(FieldOperand(rax, JSObject::kElementsOffset), rdi);
 
   // rax = address of new object (tagged)
@@ -1187,7 +1187,7 @@ void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
   __ testq(rbx, rbx);
   __ j(zero, &skip_parameter_map);
 
-  __ LoadRoot(kScratchRegister, Heap::kSloppyArgumentsElementsMapRootIndex);
+  __ LoadRoot(kScratchRegister, Heap::kNonStrictArgumentsElementsMapRootIndex);
   // rbx contains the untagged argument count. Add 2 and tag to write.
   __ movp(FieldOperand(rdi, FixedArray::kMapOffset), kScratchRegister);
   __ Integer64PlusConstantToSmi(r9, rbx, 2);
@@ -1280,7 +1280,7 @@ void ArgumentsAccessStub::GenerateNewSloppyFast(MacroAssembler* masm) {
 }
 
 
-void ArgumentsAccessStub::GenerateNewSloppySlow(MacroAssembler* masm) {
+void ArgumentsAccessStub::GenerateNewNonStrictSlow(MacroAssembler* masm) {
   // rsp[0]  : return address
   // rsp[8]  : number of parameters
   // rsp[16] : receiver displacement
@@ -1343,7 +1343,7 @@ void ArgumentsAccessStub::GenerateNewStrict(MacroAssembler* masm) {
   __ j(zero, &add_arguments_object, Label::kNear);
   __ lea(rcx, Operand(rcx, times_pointer_size, FixedArray::kHeaderSize));
   __ bind(&add_arguments_object);
-  __ addq(rcx, Immediate(Heap::kStrictArgumentsObjectSize));
+  __ addq(rcx, Immediate(Heap::kArgumentsObjectSizeStrict));
 
   // Do the allocation of both objects in one go.
   __ Allocate(rcx, rax, rdx, rbx, &runtime, TAG_OBJECT);
@@ -1352,7 +1352,7 @@ void ArgumentsAccessStub::GenerateNewStrict(MacroAssembler* masm) {
   __ movp(rdi, Operand(rsi, Context::SlotOffset(Context::GLOBAL_OBJECT_INDEX)));
   __ movp(rdi, FieldOperand(rdi, GlobalObject::kNativeContextOffset));
   const int offset =
-      Context::SlotOffset(Context::STRICT_ARGUMENTS_BOILERPLATE_INDEX);
+      Context::SlotOffset(Context::STRICT_MODE_ARGUMENTS_BOILERPLATE_INDEX);
   __ movp(rdi, Operand(rdi, offset));
 
   // Copy the JS object part.
@@ -1378,7 +1378,7 @@ void ArgumentsAccessStub::GenerateNewStrict(MacroAssembler* masm) {
 
   // Set up the elements pointer in the allocated arguments object and
   // initialize the header in the elements fixed array.
-  __ lea(rdi, Operand(rax, Heap::kStrictArgumentsObjectSize));
+  __ lea(rdi, Operand(rax, Heap::kArgumentsObjectSizeStrict));
   __ movp(FieldOperand(rax, JSObject::kElementsOffset), rdi);
   __ LoadRoot(kScratchRegister, Heap::kFixedArrayMapRootIndex);
   __ movp(FieldOperand(rdi, FixedArray::kMapOffset), kScratchRegister);
@@ -2161,32 +2161,28 @@ void ICCompareStub::GenerateGeneric(MacroAssembler* masm) {
 
 
 static void GenerateRecordCallTarget(MacroAssembler* masm) {
-  // Cache the called function in a feedback vector slot.  Cache states
+  // Cache the called function in a global property cell.  Cache states
   // are uninitialized, monomorphic (indicated by a JSFunction), and
   // megamorphic.
   // rax : number of arguments to the construct function
-  // rbx : Feedback vector
-  // rdx : slot in feedback vector (Smi)
+  // rbx : cache cell for call target
   // rdi : the function to call
   Isolate* isolate = masm->isolate();
-  Label initialize, done, miss, megamorphic, not_array_function,
-      done_no_smi_convert;
+  Label initialize, done, miss, megamorphic, not_array_function;
 
   // Load the cache state into rcx.
-  __ SmiToInteger32(rdx, rdx);
-  __ movp(rcx, FieldOperand(rbx, rdx, times_pointer_size,
-                            FixedArray::kHeaderSize));
+  __ movp(rcx, FieldOperand(rbx, Cell::kValueOffset));
 
   // A monomorphic cache hit or an already megamorphic state: invoke the
   // function without changing the state.
   __ cmpq(rcx, rdi);
   __ j(equal, &done);
-  __ Cmp(rcx, TypeFeedbackInfo::MegamorphicSentinel(isolate));
+  __ Cmp(rcx, TypeFeedbackCells::MegamorphicSentinel(isolate));
   __ j(equal, &done);
 
   // If we came here, we need to see if we are the array function.
   // If we didn't have a matching function, and we didn't find the megamorph
-  // sentinel, then we have in the slot either some other function or an
+  // sentinel, then we have in the cell either some other function or an
   // AllocationSite. Do a map check on the object in rcx.
   Handle<Map> allocation_site_map =
       masm->isolate()->factory()->allocation_site_map();
@@ -2194,7 +2190,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   __ j(not_equal, &miss);
 
   // Make sure the function is the Array() function
-  __ LoadGlobalFunction(Context::ARRAY_FUNCTION_INDEX, rcx);
+  __ LoadArrayFunction(rcx);
   __ cmpq(rdi, rcx);
   __ j(not_equal, &megamorphic);
   __ jmp(&done);
@@ -2203,25 +2199,25 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
 
   // A monomorphic miss (i.e, here the cache is not uninitialized) goes
   // megamorphic.
-  __ Cmp(rcx, TypeFeedbackInfo::UninitializedSentinel(isolate));
+  __ Cmp(rcx, TypeFeedbackCells::UninitializedSentinel(isolate));
   __ j(equal, &initialize);
   // MegamorphicSentinel is an immortal immovable object (undefined) so no
   // write-barrier is needed.
   __ bind(&megamorphic);
-  __ Move(FieldOperand(rbx, rdx, times_pointer_size, FixedArray::kHeaderSize),
-          TypeFeedbackInfo::MegamorphicSentinel(isolate));
+  __ Move(FieldOperand(rbx, Cell::kValueOffset),
+          TypeFeedbackCells::MegamorphicSentinel(isolate));
   __ jmp(&done);
 
   // An uninitialized cache is patched with the function or sentinel to
   // indicate the ElementsKind if function is the Array constructor.
   __ bind(&initialize);
   // Make sure the function is the Array() function
-  __ LoadGlobalFunction(Context::ARRAY_FUNCTION_INDEX, rcx);
+  __ LoadArrayFunction(rcx);
   __ cmpq(rdi, rcx);
   __ j(not_equal, &not_array_function);
 
   // The target function is the Array constructor,
-  // Create an AllocationSite if we don't already have it, store it in the slot.
+  // Create an AllocationSite if we don't already have it, store it in the cell
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
 
@@ -2229,46 +2225,28 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
     __ Integer32ToSmi(rax, rax);
     __ push(rax);
     __ push(rdi);
-    __ Integer32ToSmi(rdx, rdx);
-    __ push(rdx);
     __ push(rbx);
 
     CreateAllocationSiteStub create_stub;
     __ CallStub(&create_stub);
 
     __ pop(rbx);
-    __ pop(rdx);
     __ pop(rdi);
     __ pop(rax);
     __ SmiToInteger32(rax, rax);
   }
-  __ jmp(&done_no_smi_convert);
+  __ jmp(&done);
 
   __ bind(&not_array_function);
-  __ movp(FieldOperand(rbx, rdx, times_pointer_size, FixedArray::kHeaderSize),
-          rdi);
-
-  // We won't need rdx or rbx anymore, just save rdi
-  __ push(rdi);
-  __ push(rbx);
-  __ push(rdx);
-  __ RecordWriteArray(rbx, rdi, rdx, kDontSaveFPRegs,
-                      EMIT_REMEMBERED_SET, OMIT_SMI_CHECK);
-  __ pop(rdx);
-  __ pop(rbx);
-  __ pop(rdi);
+  __ movp(FieldOperand(rbx, Cell::kValueOffset), rdi);
+  // No need for a write barrier here - cells are rescanned.
 
   __ bind(&done);
-  __ Integer32ToSmi(rdx, rdx);
-
-  __ bind(&done_no_smi_convert);
 }
 
 
 void CallFunctionStub::Generate(MacroAssembler* masm) {
-  // rbx : feedback vector
-  // rdx : (only if rbx is not the megamorphic symbol) slot in feedback
-  //       vector (Smi)
+  // rbx : cache cell for call target
   // rdi : the function to call
   Isolate* isolate = masm->isolate();
   Label slow, non_function, wrap, cont;
@@ -2305,7 +2283,6 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
       __ j(not_equal, &cont);
     }
 
-
     // Load the receiver from the stack.
     __ movp(rax, args.GetReceiverOperand());
 
@@ -2328,12 +2305,9 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
     if (RecordCallTarget()) {
       // If there is a call target cache, mark it megamorphic in the
       // non-function case.  MegamorphicSentinel is an immortal immovable
-      // object (megamorphic symbol) so no write barrier is needed.
-      __ SmiToInteger32(rdx, rdx);
-      __ Move(FieldOperand(rbx, rdx, times_pointer_size,
-                           FixedArray::kHeaderSize),
-              TypeFeedbackInfo::MegamorphicSentinel(isolate));
-      __ Integer32ToSmi(rdx, rdx);
+      // object (undefined) so no write barrier is needed.
+      __ Move(FieldOperand(rbx, Cell::kValueOffset),
+              TypeFeedbackCells::MegamorphicSentinel(isolate));
     }
     // Check for function proxy.
     __ CmpInstanceType(rcx, JS_FUNCTION_PROXY_TYPE);
@@ -2379,9 +2353,7 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
 
 void CallConstructStub::Generate(MacroAssembler* masm) {
   // rax : number of arguments
-  // rbx : feedback vector
-  // rdx : (only if rbx is not the megamorphic symbol) slot in feedback
-  //       vector (Smi)
+  // rbx : cache cell for call target
   // rdi : constructor function
   Label slow, non_function_call;
 
@@ -4539,7 +4511,7 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
     // remembered set.
     CheckNeedsToInformIncrementalMarker(
         masm, kUpdateRememberedSetOnNoNeedToInformIncrementalMarker, mode);
-    InformIncrementalMarker(masm);
+    InformIncrementalMarker(masm, mode);
     regs_.Restore(masm);
     __ RememberedSetHelper(object_,
                            address_,
@@ -4552,13 +4524,13 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
 
   CheckNeedsToInformIncrementalMarker(
       masm, kReturnOnNoNeedToInformIncrementalMarker, mode);
-  InformIncrementalMarker(masm);
+  InformIncrementalMarker(masm, mode);
   regs_.Restore(masm);
   __ ret(0);
 }
 
 
-void RecordWriteStub::InformIncrementalMarker(MacroAssembler* masm) {
+void RecordWriteStub::InformIncrementalMarker(MacroAssembler* masm, Mode mode) {
   regs_.SaveCallerSaveRegisters(masm, save_fp_regs_mode_);
   Register address =
       arg_reg_1.is(regs_.address()) ? kScratchRegister : regs_.address();
@@ -4574,10 +4546,18 @@ void RecordWriteStub::InformIncrementalMarker(MacroAssembler* masm) {
 
   AllowExternalCallThatCantCauseGC scope(masm);
   __ PrepareCallCFunction(argument_count);
-  __ CallCFunction(
-      ExternalReference::incremental_marking_record_write_function(
-          masm->isolate()),
-      argument_count);
+  if (mode == INCREMENTAL_COMPACTION) {
+    __ CallCFunction(
+        ExternalReference::incremental_evacuation_record_write_function(
+            masm->isolate()),
+        argument_count);
+  } else {
+    ASSERT(mode == INCREMENTAL);
+    __ CallCFunction(
+        ExternalReference::incremental_marking_record_write_function(
+            masm->isolate()),
+        argument_count);
+  }
   regs_.RestoreCallerSaveRegisters(masm, save_fp_regs_mode_);
 }
 
@@ -4887,7 +4867,7 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
     __ TailCallStub(&stub);
   } else if (mode == DONT_OVERRIDE) {
     // We are going to create a holey array, but our kind is non-holey.
-    // Fix kind and retry (only if we have an allocation site in the slot).
+    // Fix kind and retry (only if we have an allocation site in the cell).
     __ incl(rdx);
 
     if (FLAG_debug_code) {
@@ -4997,14 +4977,14 @@ void ArrayConstructorStub::GenerateDispatchToArrayStub(
 void ArrayConstructorStub::Generate(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- rax    : argc
-  //  -- rbx    : feedback vector (fixed array or megamorphic symbol)
-  //  -- rdx    : slot index (if ebx is fixed array)
+  //  -- rbx    : type info cell
   //  -- rdi    : constructor
   //  -- rsp[0] : return address
   //  -- rsp[8] : last argument
   // -----------------------------------
-  Handle<Object> megamorphic_sentinel =
-      TypeFeedbackInfo::MegamorphicSentinel(masm->isolate());
+  Handle<Object> undefined_sentinel(
+      masm->isolate()->heap()->undefined_value(),
+      masm->isolate());
 
   if (FLAG_debug_code) {
     // The array construct code is only set for the global and natives
@@ -5019,31 +4999,22 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
     __ CmpObjectType(rcx, MAP_TYPE, rcx);
     __ Check(equal, kUnexpectedInitialMapForArrayFunction);
 
-    // We should either have the megamorphic symbol in rbx or a valid
-    // fixed array.
+    // We should either have undefined in rbx or a valid cell
     Label okay_here;
-    Handle<Map> fixed_array_map = masm->isolate()->factory()->fixed_array_map();
-    __ Cmp(rbx, megamorphic_sentinel);
+    Handle<Map> cell_map = masm->isolate()->factory()->cell_map();
+    __ Cmp(rbx, undefined_sentinel);
     __ j(equal, &okay_here);
-    __ Cmp(FieldOperand(rbx, 0), fixed_array_map);
-    __ Assert(equal, kExpectedFixedArrayInRegisterRbx);
-
-    // rdx should be a smi if we don't have the megamorphic symbol in rbx.
-    __ AssertSmi(rdx);
-
+    __ Cmp(FieldOperand(rbx, 0), cell_map);
+    __ Assert(equal, kExpectedPropertyCellInRegisterRbx);
     __ bind(&okay_here);
   }
 
   Label no_info;
-  // If the feedback slot is the megamorphic sentinel, or contains anything
-  // other than an AllocationSite, call an array constructor that doesn't use
-  // AllocationSites.
-  __ Cmp(rbx, megamorphic_sentinel);
+  // If the type cell is undefined, or contains anything other than an
+  // AllocationSite, call an array constructor that doesn't use AllocationSites.
+  __ Cmp(rbx, undefined_sentinel);
   __ j(equal, &no_info);
-  __ SmiToInteger32(rdx, rdx);
-  __ movp(rbx, FieldOperand(rbx, rdx, times_pointer_size,
-                            FixedArray::kHeaderSize));
-  __ Integer32ToSmi(rdx, rdx);
+  __ movp(rbx, FieldOperand(rbx, Cell::kValueOffset));
   __ Cmp(FieldOperand(rbx, 0),
          masm->isolate()->factory()->allocation_site_map());
   __ j(not_equal, &no_info);
@@ -5100,6 +5071,7 @@ void InternalArrayConstructorStub::GenerateCase(
 void InternalArrayConstructorStub::Generate(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- rax    : argc
+  //  -- rbx    : type info cell
   //  -- rdi    : constructor
   //  -- rsp[0] : return address
   //  -- rsp[8] : last argument
@@ -5172,7 +5144,7 @@ void CallApiFunctionStub::Generate(MacroAssembler* masm) {
   Register context = rsi;
 
   int argc = ArgumentBits::decode(bit_field_);
-  bool is_store = IsStoreBits::decode(bit_field_);
+  bool restore_context = RestoreContextBits::decode(bit_field_);
   bool call_data_undefined = CallDataUndefinedBits::decode(bit_field_);
 
   typedef FunctionCallbackArguments FCA;
@@ -5248,21 +5220,19 @@ void CallApiFunctionStub::Generate(MacroAssembler* masm) {
 
   Address thunk_address = FUNCTION_ADDR(&InvokeFunctionCallback);
 
-  // Accessor for FunctionCallbackInfo and first js arg.
-  StackArgumentsAccessor args_from_rbp(rbp, FCA::kArgsLength + 1,
+  StackArgumentsAccessor args_from_rbp(rbp, FCA::kArgsLength,
                                        ARGUMENTS_DONT_CONTAIN_RECEIVER);
   Operand context_restore_operand = args_from_rbp.GetArgumentOperand(
-      FCA::kArgsLength - FCA::kContextSaveIndex);
-  // Stores return the first js argument
+      FCA::kArgsLength - 1 - FCA::kContextSaveIndex);
   Operand return_value_operand = args_from_rbp.GetArgumentOperand(
-      is_store ? 0 : FCA::kArgsLength - FCA::kReturnValueOffset);
+      FCA::kArgsLength - 1 - FCA::kReturnValueOffset);
   __ CallApiFunctionAndReturn(
       api_function_address,
       thunk_address,
       callback_arg,
       argc + FCA::kArgsLength + 1,
       return_value_operand,
-      &context_restore_operand);
+      restore_context ? &context_restore_operand : NULL);
 }
 
 

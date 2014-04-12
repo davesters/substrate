@@ -59,8 +59,6 @@
 #include "ia32/assembler-ia32-inl.h"
 #elif V8_TARGET_ARCH_X64
 #include "x64/assembler-x64-inl.h"
-#elif V8_TARGET_ARCH_A64
-#include "a64/assembler-a64-inl.h"
 #elif V8_TARGET_ARCH_ARM
 #include "arm/assembler-arm-inl.h"
 #elif V8_TARGET_ARCH_MIPS
@@ -75,8 +73,6 @@
 #include "ia32/regexp-macro-assembler-ia32.h"
 #elif V8_TARGET_ARCH_X64
 #include "x64/regexp-macro-assembler-x64.h"
-#elif V8_TARGET_ARCH_A64
-#include "a64/regexp-macro-assembler-a64.h"
 #elif V8_TARGET_ARCH_ARM
 #include "arm/regexp-macro-assembler-arm.h"
 #elif V8_TARGET_ARCH_MIPS
@@ -126,6 +122,7 @@ AssemblerBase::AssemblerBase(Isolate* isolate, void* buffer, int buffer_size)
   if (FLAG_mask_constants_with_cookie && isolate != NULL)  {
     jit_cookie_ = isolate->random_number_generator()->NextInt();
   }
+
   if (buffer == NULL) {
     // Do our own buffer management.
     if (buffer_size <= kMinimalBufferSize) {
@@ -1029,6 +1026,14 @@ ExternalReference ExternalReference::
 
 
 ExternalReference ExternalReference::
+    incremental_evacuation_record_write_function(Isolate* isolate) {
+  return ExternalReference(Redirect(
+      isolate,
+      FUNCTION_ADDR(IncrementalMarking::RecordWriteForEvacuationFromCode)));
+}
+
+
+ExternalReference ExternalReference::
     store_buffer_overflow_function(Isolate* isolate) {
   return ExternalReference(Redirect(
       isolate,
@@ -1331,8 +1336,6 @@ ExternalReference ExternalReference::re_check_stack_guard_state(
   function = FUNCTION_ADDR(RegExpMacroAssemblerX64::CheckStackGuardState);
 #elif V8_TARGET_ARCH_IA32
   function = FUNCTION_ADDR(RegExpMacroAssemblerIA32::CheckStackGuardState);
-#elif V8_TARGET_ARCH_A64
-  function = FUNCTION_ADDR(RegExpMacroAssemblerA64::CheckStackGuardState);
 #elif V8_TARGET_ARCH_ARM
   function = FUNCTION_ADDR(RegExpMacroAssemblerARM::CheckStackGuardState);
 #elif V8_TARGET_ARCH_MIPS
@@ -1591,40 +1594,6 @@ bool PositionsRecorder::WriteRecordedPositions() {
 
   // Return whether something was written.
   return written;
-}
-
-
-MultiplierAndShift::MultiplierAndShift(int32_t d) {
-  ASSERT(d <= -2 || 2 <= d);
-  const uint32_t two31 = 0x80000000;
-  uint32_t ad = Abs(d);
-  uint32_t t = two31 + (uint32_t(d) >> 31);
-  uint32_t anc = t - 1 - t % ad;   // Absolute value of nc.
-  int32_t p = 31;                  // Init. p.
-  uint32_t q1 = two31 / anc;       // Init. q1 = 2**p/|nc|.
-  uint32_t r1 = two31 - q1 * anc;  // Init. r1 = rem(2**p, |nc|).
-  uint32_t q2 = two31 / ad;        // Init. q2 = 2**p/|d|.
-  uint32_t r2 = two31 - q2 * ad;   // Init. r2 = rem(2**p, |d|).
-  uint32_t delta;
-  do {
-    p++;
-    q1 *= 2;          // Update q1 = 2**p/|nc|.
-    r1 *= 2;          // Update r1 = rem(2**p, |nc|).
-    if (r1 >= anc) {  // Must be an unsigned comparison here.
-      q1++;
-      r1 = r1 - anc;
-    }
-    q2 *= 2;          // Update q2 = 2**p/|d|.
-    r2 *= 2;          // Update r2 = rem(2**p, |d|).
-    if (r2 >= ad) {   // Must be an unsigned comparison here.
-      q2++;
-      r2 = r2 - ad;
-    }
-    delta = ad - r2;
-  } while (q1 < delta || (q1 == delta && r1 == 0));
-  int32_t mul = static_cast<int32_t>(q2 + 1);
-  multiplier_ = (d < 0) ? -mul : mul;
-  shift_ = p - 32;
 }
 
 } }  // namespace v8::internal

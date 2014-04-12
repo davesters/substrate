@@ -78,6 +78,7 @@ namespace internal {
   V(ByteArray, empty_byte_array, EmptyByteArray)                               \
   V(DescriptorArray, empty_descriptor_array, EmptyDescriptorArray)             \
   V(ConstantPoolArray, empty_constant_pool_array, EmptyConstantPoolArray)      \
+  V(Smi, stack_limit, StackLimit)                                              \
   V(Oddball, arguments_marker, ArgumentsMarker)                                \
   /* The roots above this line should be boring from a GC point of view.    */ \
   /* This means they are never in new space and never on a page that is     */ \
@@ -164,7 +165,7 @@ namespace internal {
   V(Map, fixed_float32_array_map, FixedFloat32ArrayMap)                        \
   V(Map, fixed_float64_array_map, FixedFloat64ArrayMap)                        \
   V(Map, fixed_uint8_clamped_array_map, FixedUint8ClampedArrayMap)             \
-  V(Map, sloppy_arguments_elements_map, SloppyArgumentsElementsMap)            \
+  V(Map, non_strict_arguments_elements_map, NonStrictArgumentsElementsMap)     \
   V(Map, function_context_map, FunctionContextMap)                             \
   V(Map, catch_context_map, CatchContextMap)                                   \
   V(Map, with_context_map, WithContextMap)                                     \
@@ -185,36 +186,27 @@ namespace internal {
   V(Code, js_entry_code, JsEntryCode)                                          \
   V(Code, js_construct_entry_code, JsConstructEntryCode)                       \
   V(FixedArray, natives_source_cache, NativesSourceCache)                      \
+  V(Smi, last_script_id, LastScriptId)                                         \
   V(Script, empty_script, EmptyScript)                                         \
+  V(Smi, real_stack_limit, RealStackLimit)                                     \
   V(NameDictionary, intrinsic_function_names, IntrinsicFunctionNames)          \
+  V(Smi, arguments_adaptor_deopt_pc_offset, ArgumentsAdaptorDeoptPCOffset)     \
+  V(Smi, construct_stub_deopt_pc_offset, ConstructStubDeoptPCOffset)           \
+  V(Smi, getter_stub_deopt_pc_offset, GetterStubDeoptPCOffset)                 \
+  V(Smi, setter_stub_deopt_pc_offset, SetterStubDeoptPCOffset)                 \
   V(Cell, undefined_cell, UndefineCell)                                        \
   V(JSObject, observation_state, ObservationState)                             \
   V(Map, external_map, ExternalMap)                                            \
   V(Symbol, frozen_symbol, FrozenSymbol)                                       \
-  V(Symbol, nonexistent_symbol, NonExistentSymbol)                             \
   V(Symbol, elements_transition_symbol, ElementsTransitionSymbol)              \
   V(SeededNumberDictionary, empty_slow_element_dictionary,                     \
       EmptySlowElementDictionary)                                              \
   V(Symbol, observed_symbol, ObservedSymbol)                                   \
-  V(Symbol, uninitialized_symbol, UninitializedSymbol)                         \
-  V(Symbol, megamorphic_symbol, MegamorphicSymbol)                             \
   V(FixedArray, materialized_objects, MaterializedObjects)                     \
-  V(FixedArray, allocation_sites_scratchpad, AllocationSitesScratchpad)        \
-  V(JSObject, microtask_state, MicrotaskState)
-
-// Entries in this list are limited to Smis and are not visited during GC.
-#define SMI_ROOT_LIST(V)                                                       \
-  V(Smi, stack_limit, StackLimit)                                              \
-  V(Smi, real_stack_limit, RealStackLimit)                                     \
-  V(Smi, last_script_id, LastScriptId)                                         \
-  V(Smi, arguments_adaptor_deopt_pc_offset, ArgumentsAdaptorDeoptPCOffset)     \
-  V(Smi, construct_stub_deopt_pc_offset, ConstructStubDeoptPCOffset)           \
-  V(Smi, getter_stub_deopt_pc_offset, GetterStubDeoptPCOffset)                 \
-  V(Smi, setter_stub_deopt_pc_offset, SetterStubDeoptPCOffset)
+  V(FixedArray, allocation_sites_scratchpad, AllocationSitesScratchpad)
 
 #define ROOT_LIST(V)                                  \
   STRONG_ROOT_LIST(V)                                 \
-  SMI_ROOT_LIST(V)                                    \
   V(StringTable, string_table, StringTable)
 
 // Heap roots that are known to be immortal immovable, for which we can safely
@@ -250,7 +242,7 @@ namespace internal {
   V(empty_constant_pool_array)            \
   V(arguments_marker)                     \
   V(symbol_map)                           \
-  V(sloppy_arguments_elements_map)        \
+  V(non_strict_arguments_elements_map)    \
   V(function_context_map)                 \
   V(catch_context_map)                    \
   V(with_context_map)                     \
@@ -686,13 +678,14 @@ class Heap {
   // constructor.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
   // failed.
-  // If allocation_site is non-null, then a memento is emitted after the object
-  // that points to the site.
   // Please note this does not perform a garbage collection.
   MUST_USE_RESULT MaybeObject* AllocateJSObject(
       JSFunction* constructor,
-      PretenureFlag pretenure = NOT_TENURED,
-      AllocationSite* allocation_site = NULL);
+      PretenureFlag pretenure = NOT_TENURED);
+
+  MUST_USE_RESULT MaybeObject* AllocateJSObjectWithAllocationSite(
+      JSFunction* constructor,
+      Handle<AllocationSite> allocation_site);
 
   MUST_USE_RESULT MaybeObject* AllocateJSModule(Context* context,
                                                 ScopeInfo* scope_info);
@@ -772,21 +765,21 @@ class Heap {
   // Allocates and initializes a new JavaScript object based on a map.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
   // failed.
-  // Passing an allocation site means that a memento will be created that
-  // points to the site.
   // Please note this does not perform a garbage collection.
   MUST_USE_RESULT MaybeObject* AllocateJSObjectFromMap(
-      Map* map,
-      PretenureFlag pretenure = NOT_TENURED,
-      bool alloc_props = true,
-      AllocationSite* allocation_site = NULL);
+      Map* map, PretenureFlag pretenure = NOT_TENURED, bool alloc_props = true);
+
+  MUST_USE_RESULT MaybeObject* AllocateJSObjectFromMapWithAllocationSite(
+      Map* map, Handle<AllocationSite> allocation_site);
 
   // Allocates a heap object based on the map.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
   // failed.
   // Please note this function does not perform a garbage collection.
-  MUST_USE_RESULT MaybeObject* Allocate(Map* map, AllocationSpace space,
-                                        AllocationSite* allocation_site = NULL);
+  MUST_USE_RESULT MaybeObject* Allocate(Map* map, AllocationSpace space);
+
+  MUST_USE_RESULT MaybeObject* AllocateWithAllocationSite(Map* map,
+      AllocationSpace space, Handle<AllocationSite> allocation_site);
 
   // Allocates a JS Map in the heap.
   // Returns Failure::RetryAfterGC(requested_bytes, space) if the allocation
@@ -1012,10 +1005,9 @@ class Heap {
       PretenureFlag pretenure = NOT_TENURED);
 
   MUST_USE_RESULT MaybeObject* AllocateConstantPoolArray(
-      int number_of_int64_entries,
-      int number_of_code_ptr_entries,
-      int number_of_heap_ptr_entries,
-      int number_of_int32_entries);
+      int first_int64_index,
+      int first_ptr_index,
+      int first_int32_index);
 
   // Allocates a fixed double array with uninitialized values. Returns
   // Failure::RetryAfterGC(requested_bytes, space) if the allocation failed.
@@ -1078,15 +1070,15 @@ class Heap {
       Object* prototype,
       PretenureFlag pretenure = TENURED);
 
-  // Sloppy mode arguments object size.
-  static const int kSloppyArgumentsObjectSize =
+  // Arguments object size.
+  static const int kArgumentsObjectSize =
       JSObject::kHeaderSize + 2 * kPointerSize;
   // Strict mode arguments has no callee so it is smaller.
-  static const int kStrictArgumentsObjectSize =
+  static const int kArgumentsObjectSizeStrict =
       JSObject::kHeaderSize + 1 * kPointerSize;
   // Indicies for direct access into argument objects.
   static const int kArgumentsLengthIndex = 0;
-  // callee is only valid in sloppy mode.
+  // callee is only valid in non-strict mode.
   static const int kArgumentsCalleeIndex = 1;
 
   // Allocates an arguments object - optionally with an elements array.
@@ -1142,6 +1134,7 @@ class Heap {
       int start_position,
       int end_position,
       Object* script,
+      Object* stack_trace,
       Object* stack_frames);
 
   // Allocate a new external string object, which is backed by a string
@@ -1262,6 +1255,10 @@ class Heap {
   // Notify the heap that a context has been disposed.
   int NotifyContextDisposed();
 
+  // Utility to invoke the scavenger. This is needed in test code to
+  // ensure correct callback for weak global handles.
+  void PerformScavenge();
+
   inline void increment_scan_on_scavenge_pages() {
     scan_on_scavenge_pages_++;
     if (FLAG_gc_verbose) {
@@ -1350,9 +1347,6 @@ class Heap {
   void IterateRoots(ObjectVisitor* v, VisitMode mode);
   // Iterates over all strong roots in the heap.
   void IterateStrongRoots(ObjectVisitor* v, VisitMode mode);
-  // Iterates over entries in the smi roots list.  Only interesting to the
-  // serializer/deserializer, since GC does not care about smis.
-  void IterateSmiRoots(ObjectVisitor* v);
   // Iterates over all the other roots in the heap.
   void IterateWeakRoots(ObjectVisitor* v, VisitMode mode);
 
@@ -1507,16 +1501,10 @@ class Heap {
   static inline void ScavengePointer(HeapObject** p);
   static inline void ScavengeObject(HeapObject** p, HeapObject* object);
 
-  enum ScratchpadSlotMode {
-    IGNORE_SCRATCHPAD_SLOT,
-    RECORD_SCRATCHPAD_SLOT
-  };
-
   // An object may have an AllocationSite associated with it through a trailing
   // AllocationMemento. Its feedback should be updated when objects are found
   // in the heap.
-  static inline void UpdateAllocationSiteFeedback(
-      HeapObject* object, ScratchpadSlotMode mode);
+  static inline void UpdateAllocationSiteFeedback(HeapObject* object);
 
   // Support for partial snapshots.  After calling this we have a linear
   // space to write objects in each space.
@@ -1594,7 +1582,7 @@ class Heap {
   // Implements the corresponding V8 API function.
   bool IdleNotification(int hint);
 
-  // Declare all the root indices.  This defines the root list order.
+  // Declare all the root indices.
   enum RootListIndex {
 #define ROOT_INDEX_DECLARATION(type, name, camel_name) k##camel_name##RootIndex,
     STRONG_ROOT_LIST(ROOT_INDEX_DECLARATION)
@@ -1610,14 +1598,8 @@ class Heap {
 #undef DECLARE_STRUCT_MAP
 
     kStringTableRootIndex,
-
-#define ROOT_INDEX_DECLARATION(type, name, camel_name) k##camel_name##RootIndex,
-    SMI_ROOT_LIST(ROOT_INDEX_DECLARATION)
-#undef ROOT_INDEX_DECLARATION
-
-    kRootListLength,
     kStrongRootListLength = kStringTableRootIndex,
-    kSmiRootsStart = kStringTableRootIndex + 1
+    kRootListLength
   };
 
   STATIC_CHECK(kUndefinedValueRootIndex == Internals::kUndefinedValueRootIndex);
@@ -1851,8 +1833,6 @@ class Heap {
   int64_t amount_of_external_allocated_memory() {
     return amount_of_external_allocated_memory_;
   }
-
-  void DeoptMarkedAllocationSites();
 
   // ObjectStats are kept in two arrays, counts and sizes. Related stats are
   // stored in a contiguous linear buffer. Stats groups are stored one after
@@ -2140,11 +2120,6 @@ class Heap {
   GarbageCollector SelectGarbageCollector(AllocationSpace space,
                                           const char** reason);
 
-  // Make sure there is a filler value behind the top of the new space
-  // so that the GC does not confuse some unintialized/stale memory
-  // with the allocation memento of the object at the top
-  void EnsureFillerObjectAtTop();
-
   // Performs garbage collection operation.
   // Returns whether there is a chance that another major GC could
   // collect more garbage.
@@ -2321,8 +2296,7 @@ class Heap {
   void InitializeAllocationSitesScratchpad();
 
   // Adds an allocation site to the scratchpad if there is space left.
-  void AddAllocationSiteToScratchpad(AllocationSite* site,
-                                     ScratchpadSlotMode mode);
+  void AddAllocationSiteToScratchpad(AllocationSite* site);
 
   void UpdateSurvivalRateTrend(int start_new_space_size);
 
@@ -2610,13 +2584,6 @@ class NoWeakObjectVerificationScope {
 // Caveat: Heap::Contains is an approximation because it can return true for
 // objects in a heap space but above the allocation pointer.
 class VerifyPointersVisitor: public ObjectVisitor {
- public:
-  inline void VisitPointers(Object** start, Object** end);
-};
-
-
-// Verify that all objects are Smis.
-class VerifySmisVisitor: public ObjectVisitor {
  public:
   inline void VisitPointers(Object** start, Object** end);
 };

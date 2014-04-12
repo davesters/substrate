@@ -141,11 +141,9 @@ int TypeImpl<Config>::LubBitset() {
     }
     return bitset;
   } else if (this->IsClass()) {
-    int bitset = Config::lub_bitset(this);
-    return bitset ? bitset : LubBitset(*this->AsClass());
+    return LubBitset(*this->AsClass());
   } else {
-    int bitset = Config::lub_bitset(this);
-    return bitset ? bitset : LubBitset(*this->AsConstant());
+    return LubBitset(*this->AsConstant());
   }
 }
 
@@ -166,7 +164,6 @@ int TypeImpl<Config>::LubBitset(i::Object* value) {
     if (value->IsNull()) return kNull;
     if (value->IsBoolean()) return kBoolean;
     if (value->IsTheHole()) return kAny;  // TODO(rossberg): kNone?
-    if (value->IsUninitialized()) return kNone;
     UNREACHABLE();
   }
   return LubBitset(map);
@@ -550,9 +547,9 @@ typename TypeImpl<Config>::TypeHandle TypeImpl<Config>::Convert(
   if (type->IsBitset()) {
     return Config::from_bitset(type->AsBitset(), region);
   } else if (type->IsClass()) {
-    return Config::from_class(type->AsClass(), type->LubBitset(), region);
+    return Config::from_class(type->AsClass(), region);
   } else if (type->IsConstant()) {
-    return Config::from_constant(type->AsConstant(), type->LubBitset(), region);
+    return Config::from_constant(type->AsConstant(), region);
   } else {
     ASSERT(type->IsUnion());
     typename OtherType::UnionedHandle unioned = type->AsUnion();

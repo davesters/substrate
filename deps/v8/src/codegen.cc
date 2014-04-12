@@ -165,8 +165,6 @@ void CodeGenerator::PrintCode(Handle<Code> code, CompilationInfo* info) {
             function->debug_name()->ToCString().get(), tracing_scope.file());
       }
       PrintF(tracing_scope.file(), "--- Optimized code ---\n");
-      PrintF(tracing_scope.file(),
-             "optimization_id = %d\n", info->optimization_id());
     } else {
       PrintF(tracing_scope.file(), "--- Code ---\n");
     }
@@ -222,11 +220,11 @@ void ArgumentsAccessStub::Generate(MacroAssembler* masm) {
     case READ_ELEMENT:
       GenerateReadElement(masm);
       break;
-    case NEW_SLOPPY_FAST:
-      GenerateNewSloppyFast(masm);
+    case NEW_NON_STRICT_FAST:
+      GenerateNewNonStrictFast(masm);
       break;
-    case NEW_SLOPPY_SLOW:
-      GenerateNewSloppySlow(masm);
+    case NEW_NON_STRICT_SLOW:
+      GenerateNewNonStrictSlow(masm);
       break;
     case NEW_STRICT:
       GenerateNewStrict(masm);

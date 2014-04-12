@@ -763,6 +763,7 @@ bool Debug::CompileDebuggerScript(Isolate* isolate, int index) {
                                           false,
                                           context,
                                           NULL, NULL,
+                                          Handle<String>::null(),
                                           NATIVES_CODE);
 
   // Silently ignore stack overflows during compilation.
@@ -791,7 +792,7 @@ bool Debug::CompileDebuggerScript(Isolate* isolate, int index) {
     isolate->ComputeLocation(&computed_location);
     Handle<Object> message = MessageHandler::MakeMessageObject(
         isolate, "error_loading_debugger", &computed_location,
-        Vector<Handle<Object> >::empty(), Handle<JSArray>());
+        Vector<Handle<Object> >::empty(), Handle<String>(), Handle<JSArray>());
     ASSERT(!isolate->has_pending_exception());
     if (!exception.is_null()) {
       isolate->set_pending_exception(*exception);
@@ -852,7 +853,7 @@ bool Debug::Load() {
                               key,
                               Handle<Object>(global->builtins(), isolate_),
                               NONE,
-                              SLOPPY),
+                              kNonStrictMode),
       false);
 
   // Compile the JavaScript for the debugger in the debugger context.

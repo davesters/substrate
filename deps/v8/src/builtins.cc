@@ -677,8 +677,8 @@ BUILTIN(ArraySlice) {
   } else {
     // Array.slice(arguments, ...) is quite a common idiom (notably more
     // than 50% of invocations in Web apps).  Treat it in C++ as well.
-    Map* arguments_map = isolate->context()->native_context()->
-        sloppy_arguments_boilerplate()->map();
+    Map* arguments_map =
+        isolate->context()->native_context()->arguments_boilerplate()->map();
 
     bool is_arguments_object_with_fast_elements =
         receiver->IsJSObject() &&
@@ -1174,7 +1174,7 @@ MUST_USE_RESULT static MaybeObject* HandleApiCallHelper(
   }
 
   SharedFunctionInfo* shared = function->shared();
-  if (shared->strict_mode() == SLOPPY && !shared->native()) {
+  if (shared->is_classic_mode() && !shared->native()) {
     Object* recv = args[0];
     ASSERT(!recv->IsNull());
     if (recv->IsUndefined()) {
@@ -1320,7 +1320,9 @@ static void Generate_LoadIC_Normal(MacroAssembler* masm) {
 
 
 static void Generate_LoadIC_Getter_ForDeopt(MacroAssembler* masm) {
-  LoadStubCompiler::GenerateLoadViaGetterForDeopt(masm);
+  LoadStubCompiler::GenerateLoadViaGetter(
+      masm, Handle<HeapType>::null(),
+      LoadStubCompiler::registers()[0], Handle<JSFunction>());
 }
 
 
@@ -1364,8 +1366,8 @@ static void Generate_KeyedLoadIC_IndexedInterceptor(MacroAssembler* masm) {
 }
 
 
-static void Generate_KeyedLoadIC_SloppyArguments(MacroAssembler* masm) {
-  KeyedLoadIC::GenerateSloppyArguments(masm);
+static void Generate_KeyedLoadIC_NonStrictArguments(MacroAssembler* masm) {
+  KeyedLoadIC::GenerateNonStrictArguments(masm);
 }
 
 
@@ -1385,17 +1387,18 @@ static void Generate_StoreIC_Normal(MacroAssembler* masm) {
 
 
 static void Generate_StoreIC_Setter_ForDeopt(MacroAssembler* masm) {
-  StoreStubCompiler::GenerateStoreViaSetterForDeopt(masm);
+  StoreStubCompiler::GenerateStoreViaSetter(
+      masm, Handle<HeapType>::null(), Handle<JSFunction>());
 }
 
 
 static void Generate_KeyedStoreIC_Generic(MacroAssembler* masm) {
-  KeyedStoreIC::GenerateGeneric(masm, SLOPPY);
+  KeyedStoreIC::GenerateGeneric(masm, kNonStrictMode);
 }
 
 
 static void Generate_KeyedStoreIC_Generic_Strict(MacroAssembler* masm) {
-  KeyedStoreIC::GenerateGeneric(masm, STRICT);
+  KeyedStoreIC::GenerateGeneric(masm, kStrictMode);
 }
 
 
@@ -1429,8 +1432,8 @@ static void Generate_KeyedStoreIC_PreMonomorphic_Strict(MacroAssembler* masm) {
 }
 
 
-static void Generate_KeyedStoreIC_SloppyArguments(MacroAssembler* masm) {
-  KeyedStoreIC::GenerateSloppyArguments(masm);
+static void Generate_KeyedStoreIC_NonStrictArguments(MacroAssembler* masm) {
+  KeyedStoreIC::GenerateNonStrictArguments(masm);
 }
 
 
@@ -1596,7 +1599,9 @@ void Builtins::InitBuiltinFunctionTable() {
     functions->c_code = NULL;                                               \
     functions->s_name = #aname;                                             \
     functions->name = k##aname;                                             \
-    functions->flags = Code::ComputeHandlerFlags(Code::kind);               \
+    functions->flags = Code::ComputeFlags(                                  \
+        Code::HANDLER, MONOMORPHIC, kNoExtraICState,                        \
+        Code::NORMAL, Code::kind);                                          \
     functions->extra_args = NO_EXTRA_ARGUMENTS;                             \
     ++functions;
 
@@ -1622,9 +1627,7 @@ void Builtins::SetUp(Isolate* isolate, bool create_heap_objects) {
   // For now we generate builtin adaptor code into a stack-allocated
   // buffer, before copying it into individual code objects. Be careful
   // with alignment, some platforms don't like unaligned code.
-  // TODO(jbramley): I had to increase the size of this buffer from 8KB because
-  // we can generate a lot of debug code on A64.
-  union { int force_alignment; byte buffer[16*KB]; } u;
+  union { int force_alignment; byte buffer[8*KB]; } u;
 
   // Traverse the list of builtins and generate an adaptor in a
   // separate code object for each one.

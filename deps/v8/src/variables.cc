@@ -40,9 +40,9 @@ namespace internal {
 const char* Variable::Mode2String(VariableMode mode) {
   switch (mode) {
     case VAR: return "VAR";
-    case CONST_LEGACY: return "CONST_LEGACY";
-    case LET: return "LET";
     case CONST: return "CONST";
+    case LET: return "LET";
+    case CONST_HARMONY: return "CONST_HARMONY";
     case MODULE: return "MODULE";
     case DYNAMIC: return "DYNAMIC";
     case DYNAMIC_GLOBAL: return "DYNAMIC_GLOBAL";

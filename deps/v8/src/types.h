@@ -87,17 +87,12 @@ namespace internal {
 // Consequently, do not use pointer equality for type tests, always use Is!
 //
 // Internally, all 'primitive' types, and their unions, are represented as
-// bitsets. Class is a heap pointer to the respective map. Only Constant's, or
-// unions containing Class'es or Constant's, currently require allocation.
+// bitsets via smis. Class is a heap pointer to the respective map. Only
+// Constant's, or unions containing Class'es or Constant's, require allocation.
 // Note that the bitset representation is closed under both Union and Intersect.
 //
-// There are two type representations, using different allocation:
-//
-// - class Type (zone-allocated, for compiler and concurrent compilation)
-// - class HeapType (heap-allocated, for persistent types)
-//
-// Both provide the same API, and the Convert method can be used to interconvert
-// them. For zone types, no query method touches the heap, only constructors do.
+// The type representation is heap-allocated, so cannot (currently) be used in
+// a concurrent compilation context.
 
 
 #define BITSET_TYPE_LIST(V)              \
@@ -152,15 +147,14 @@ namespace internal {
 //   static Handle<Unioned>::type as_union(Type*);
 //   static Type* from_bitset(int bitset);
 //   static Handle<Type>::type from_bitset(int bitset, Region*);
-//   static Handle<Type>::type from_class(i::Handle<Map>, int lub, Region*);
-//   static Handle<Type>::type from_constant(i::Handle<Object>, int, Region*);
+//   static Handle<Type>::type from_class(i::Handle<i::Map>, Region*)
+//   static Handle<Type>::type from_constant(i::Handle<i::Object>, Region*);
 //   static Handle<Type>::type from_union(Handle<Unioned>::type);
 //   static Handle<Unioned>::type union_create(int size, Region*);
 //   static void union_shrink(Handle<Unioned>::type, int size);
 //   static Handle<Type>::type union_get(Handle<Unioned>::type, int);
 //   static void union_set(Handle<Unioned>::type, int, Handle<Type>::type);
 //   static int union_length(Handle<Unioned>::type);
-//   static int lub_bitset(Type*);
 // }
 template<class Config>
 class TypeImpl : public Config::Base {
@@ -177,10 +171,10 @@ class TypeImpl : public Config::Base {
   #undef DEFINE_TYPE_CONSTRUCTOR
 
   static TypeHandle Class(i::Handle<i::Map> map, Region* region) {
-    return Config::from_class(map, LubBitset(*map), region);
+    return Config::from_class(map, region);
   }
   static TypeHandle Constant(i::Handle<i::Object> value, Region* region) {
-    return Config::from_constant(value, LubBitset(*value), region);
+    return Config::from_constant(value, region);
   }
 
   static TypeHandle Union(TypeHandle type1, TypeHandle type2, Region* reg);
@@ -341,7 +335,7 @@ struct ZoneTypeConfig {
   }
   template<class T>
   static void tagged_set(Tagged* tagged, int i, T value) {
-    tagged->at(i + 1) = reinterpret_cast<void*>(value);
+    tagged->at(i + 1) = reinterpret_cast<T>(value);
   }
   static int tagged_length(Tagged* tagged) {
     return tagged->length() - 1;
@@ -381,11 +375,11 @@ struct ZoneTypeConfig {
   }
   static i::Handle<i::Map> as_class(Type* type) {
     ASSERT(is_class(type));
-    return i::Handle<i::Map>(tagged_get<i::Map**>(as_tagged(type), 1));
+    return i::Handle<i::Map>(tagged_get<i::Map**>(as_tagged(type), 0));
   }
   static i::Handle<i::Object> as_constant(Type* type) {
     ASSERT(is_constant(type));
-    return i::Handle<i::Object>(tagged_get<i::Object**>(as_tagged(type), 1));
+    return i::Handle<i::Object>(tagged_get<i::Object**>(as_tagged(type), 0));
   }
   static Unioned* as_union(Type* type) {
     ASSERT(is_union(type));
@@ -405,16 +399,14 @@ struct ZoneTypeConfig {
   static Type* from_tagged(Tagged* tagged) {
     return reinterpret_cast<Type*>(tagged);
   }
-  static Type* from_class(i::Handle<i::Map> map, int lub, Zone* zone) {
-    Tagged* tagged = tagged_create(kClassTag, 2, zone);
-    tagged_set(tagged, 0, lub);
-    tagged_set(tagged, 1, map.location());
+  static Type* from_class(i::Handle<i::Map> map, Zone* zone) {
+    Tagged* tagged = tagged_create(kClassTag, 1, zone);
+    tagged_set(tagged, 0, map.location());
     return from_tagged(tagged);
   }
-  static Type* from_constant(i::Handle<i::Object> value, int lub, Zone* zone) {
-    Tagged* tagged = tagged_create(kConstantTag, 2, zone);
-    tagged_set(tagged, 0, lub);
-    tagged_set(tagged, 1, value.location());
+  static Type* from_constant(i::Handle<i::Object> value, Zone* zone) {
+    Tagged* tagged = tagged_create(kConstantTag, 1, zone);
+    tagged_set(tagged, 0, value.location());
     return from_tagged(tagged);
   }
   static Type* from_union(Unioned* unioned) {
@@ -441,10 +433,6 @@ struct ZoneTypeConfig {
   }
   static int union_length(Unioned* unioned) {
     return tagged_length(tagged_from_union(unioned));
-  }
-  static int lub_bitset(Type* type) {
-    ASSERT(is_class(type) || is_constant(type));
-    return static_cast<int>(tagged_get<intptr_t>(as_tagged(type), 0));
   }
 };
 
@@ -487,12 +475,11 @@ struct HeapTypeConfig {
   static i::Handle<Type> from_bitset(int bitset, Isolate* isolate) {
     return i::handle(from_bitset(bitset), isolate);
   }
-  static i::Handle<Type> from_class(
-      i::Handle<i::Map> map, int lub, Isolate* isolate) {
+  static i::Handle<Type> from_class(i::Handle<i::Map> map, Isolate* isolate) {
     return i::Handle<Type>::cast(i::Handle<Object>::cast(map));
   }
   static i::Handle<Type> from_constant(
-      i::Handle<i::Object> value, int lub, Isolate* isolate) {
+      i::Handle<i::Object> value, Isolate* isolate) {
     i::Handle<Box> box = isolate->factory()->NewBox(value);
     return i::Handle<Type>::cast(i::Handle<Object>::cast(box));
   }
@@ -518,9 +505,6 @@ struct HeapTypeConfig {
   }
   static int union_length(i::Handle<Unioned> unioned) {
     return unioned->length();
-  }
-  static int lub_bitset(Type* type) {
-    return 0;  // kNone, which causes recomputation.
   }
 };
 
@@ -575,10 +559,6 @@ struct BoundsImpl {
     TypeHandle lower = Type::Intersect(b.lower, t, region);
     TypeHandle upper = Type::Intersect(b.upper, t, region);
     return BoundsImpl(lower, upper);
-  }
-
-  bool Narrows(BoundsImpl that) {
-    return that.lower->Is(this->lower) && this->upper->Is(that.upper);
   }
 };
 

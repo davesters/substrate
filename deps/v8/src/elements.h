@@ -175,7 +175,7 @@ class ElementsAccessor {
   static void TearDown();
 
  protected:
-  friend class SloppyArgumentsElementsAccessor;
+  friend class NonStrictArgumentsElementsAccessor;
 
   virtual uint32_t GetCapacity(FixedArrayBase* backing_store) = 0;
 

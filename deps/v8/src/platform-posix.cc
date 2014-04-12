@@ -265,10 +265,10 @@ void OS::Sleep(int milliseconds) {
 
 
 void OS::Abort() {
-  if (FLAG_hard_abort) {
-    V8_IMMEDIATE_CRASH();
-  }
   // Redirect to std abort to signal abnormal program termination.
+  if (FLAG_break_on_abort) {
+    DebugBreak();
+  }
   abort();
 }
 
@@ -276,8 +276,6 @@ void OS::Abort() {
 void OS::DebugBreak() {
 #if V8_HOST_ARCH_ARM
   asm("bkpt 0");
-#elif V8_HOST_ARCH_A64
-  asm("brk 0");
 #elif V8_HOST_ARCH_MIPS
   asm("break");
 #elif V8_HOST_ARCH_IA32
@@ -361,9 +359,6 @@ double OS::DaylightSavingsOffset(double time) {
   if (NULL == t) return nan_value();
   return t->tm_isdst > 0 ? 3600 * msPerSecond : 0;
 }
-
-
-void OS::TimeZoneChanged() {}
 
 
 int OS::GetLastError() {

@@ -229,8 +229,7 @@ static void GenerateKeyedLoadReceiverCheck(MacroAssembler* masm,
   __ lw(map, FieldMemOperand(receiver, HeapObject::kMapOffset));
   // Check bit field.
   __ lbu(scratch, FieldMemOperand(map, Map::kBitFieldOffset));
-  __ And(at, scratch,
-         Operand((1 << Map::kIsAccessCheckNeeded) | (1 << interceptor_bit)));
+  __ And(at, scratch, Operand(KeyedLoadIC::kSlowCaseBitFieldMask));
   __ Branch(slow, ne, at, Operand(zero_reg));
   // Check that the object is some kind of JS object EXCEPT JS Value type.
   // In the case that the object is a value-wrapper object,
@@ -339,7 +338,8 @@ static void GenerateKeyNameCheck(MacroAssembler* masm,
 }
 
 
-void LoadIC::GenerateMegamorphic(MacroAssembler* masm) {
+void LoadIC::GenerateMegamorphic(MacroAssembler* masm,
+                                 ExtraICState extra_state) {
   // ----------- S t a t e -------------
   //  -- a2    : name
   //  -- ra    : return address
@@ -347,7 +347,9 @@ void LoadIC::GenerateMegamorphic(MacroAssembler* masm) {
   // -----------------------------------
 
   // Probe the stub cache.
-  Code::Flags flags = Code::ComputeHandlerFlags(Code::LOAD_IC);
+  Code::Flags flags = Code::ComputeFlags(
+      Code::HANDLER, MONOMORPHIC, extra_state,
+      Code::NORMAL, Code::LOAD_IC);
   masm->isolate()->stub_cache()->GenerateProbe(
       masm, flags, a0, a2, a3, t0, t1, t2);
 
@@ -417,8 +419,6 @@ static MemOperand GenerateMappedArgumentsLookup(MacroAssembler* masm,
                                                 Register scratch3,
                                                 Label* unmapped_case,
                                                 Label* slow_case) {
-  Heap* heap = masm->isolate()->heap();
-
   // Check that the receiver is a JSObject. Because of the map check
   // later, we do not need to check for interceptors or whether it
   // requires access checks.
@@ -432,11 +432,10 @@ static MemOperand GenerateMappedArgumentsLookup(MacroAssembler* masm,
   __ Branch(slow_case, ne, scratch1, Operand(zero_reg));
 
   // Load the elements into scratch1 and check its map.
-  Handle<Map> arguments_map(heap->sloppy_arguments_elements_map());
   __ lw(scratch1, FieldMemOperand(object, JSObject::kElementsOffset));
   __ CheckMap(scratch1,
               scratch2,
-              arguments_map,
+              Heap::kNonStrictArgumentsElementsMapRootIndex,
               slow_case,
               DONT_DO_SMI_CHECK);
   // Check if element is in the range of mapped arguments. If not, jump
@@ -499,7 +498,7 @@ static MemOperand GenerateUnmappedArgumentsLookup(MacroAssembler* masm,
 }
 
 
-void KeyedLoadIC::GenerateSloppyArguments(MacroAssembler* masm) {
+void KeyedLoadIC::GenerateNonStrictArguments(MacroAssembler* masm) {
   // ---------- S t a t e --------------
   //  -- lr     : return address
   //  -- a0     : key
@@ -524,7 +523,7 @@ void KeyedLoadIC::GenerateSloppyArguments(MacroAssembler* masm) {
 }
 
 
-void KeyedStoreIC::GenerateSloppyArguments(MacroAssembler* masm) {
+void KeyedStoreIC::GenerateNonStrictArguments(MacroAssembler* masm) {
   // ---------- S t a t e --------------
   //  -- a0     : value
   //  -- a1     : key
@@ -650,7 +649,7 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   GenerateKeyNameCheck(masm, key, a2, a3, &index_name, &slow);
 
   GenerateKeyedLoadReceiverCheck(
-       masm, receiver, a2, a3, Map::kHasNamedInterceptor, &slow);
+       masm, receiver, a2, a3, Map::kHasIndexedInterceptor, &slow);
 
 
   // If the receiver is a fast-case object, check the keyed lookup
@@ -803,7 +802,7 @@ void KeyedLoadIC::GenerateString(MacroAssembler* masm) {
 
 
 void KeyedStoreIC::GenerateRuntimeSetProperty(MacroAssembler* masm,
-                                              StrictMode strict_mode) {
+                                              StrictModeFlag strict_mode) {
   // ---------- S t a t e --------------
   //  -- a0     : value
   //  -- a1     : key
@@ -995,7 +994,7 @@ static void KeyedStoreGenerateGenericHelper(
 
 
 void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm,
-                                   StrictMode strict_mode) {
+                                   StrictModeFlag strict_mode) {
   // ---------- S t a t e --------------
   //  -- a0     : value
   //  -- a1     : key
@@ -1181,7 +1180,8 @@ void KeyedStoreIC::GenerateSlow(MacroAssembler* masm) {
 }
 
 
-void StoreIC::GenerateMegamorphic(MacroAssembler* masm) {
+void StoreIC::GenerateMegamorphic(MacroAssembler* masm,
+                                  ExtraICState extra_ic_state) {
   // ----------- S t a t e -------------
   //  -- a0    : value
   //  -- a1    : receiver
@@ -1190,7 +1190,9 @@ void StoreIC::GenerateMegamorphic(MacroAssembler* masm) {
   // -----------------------------------
 
   // Get the receiver from the stack and probe the stub cache.
-  Code::Flags flags = Code::ComputeHandlerFlags(Code::STORE_IC);
+  Code::Flags flags = Code::ComputeFlags(
+      Code::HANDLER, MONOMORPHIC, extra_ic_state,
+      Code::NORMAL, Code::STORE_IC);
   masm->isolate()->stub_cache()->GenerateProbe(
       masm, flags, a1, a2, a3, t0, t1, t2);
 
@@ -1238,7 +1240,7 @@ void StoreIC::GenerateNormal(MacroAssembler* masm) {
 
 
 void StoreIC::GenerateRuntimeSetProperty(MacroAssembler* masm,
-                                         StrictMode strict_mode) {
+                                         StrictModeFlag strict_mode) {
   // ----------- S t a t e -------------
   //  -- a0    : value
   //  -- a1    : receiver

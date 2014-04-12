@@ -316,18 +316,15 @@ class Logger {
   static void EnterExternal(Isolate* isolate);
   static void LeaveExternal(Isolate* isolate);
 
-  static void EmptyLogInternalEvents(const char* name, int se) { }
-  static void LogInternalEvents(const char* name, int se);
-
   class TimerEventScope {
    public:
     TimerEventScope(Isolate* isolate, const char* name)
         : isolate_(isolate), name_(name) {
-      LogTimerEvent(START);
+      if (FLAG_log_internal_timer_events) LogTimerEvent(START);
     }
 
     ~TimerEventScope() {
-      LogTimerEvent(END);
+      if (FLAG_log_internal_timer_events) LogTimerEvent(END);
     }
 
     void LogTimerEvent(StartEnd se);

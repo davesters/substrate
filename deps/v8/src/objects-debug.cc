@@ -264,9 +264,8 @@ void FixedTypedArray<Traits>::FixedTypedArrayVerify() {
 
 
 bool JSObject::ElementsAreSafeToExamine() {
-  // If a GC was caused while constructing this object, the elements
-  // pointer may point to a one pointer filler map.
-  return reinterpret_cast<Map*>(elements()) !=
+  return (FLAG_use_gvn && FLAG_use_allocation_folding) ||
+      reinterpret_cast<Map*>(elements()) !=
       GetHeap()->one_pointer_filler_map();
 }
 
@@ -275,7 +274,7 @@ void JSObject::JSObjectVerify() {
   VerifyHeapPointer(properties());
   VerifyHeapPointer(elements());
 
-  if (GetElementsKind() == SLOPPY_ARGUMENTS_ELEMENTS) {
+  if (GetElementsKind() == NON_STRICT_ARGUMENTS_ELEMENTS) {
     CHECK(this->elements()->IsFixedArray());
     CHECK_GE(this->elements()->length(), 2);
   }
@@ -368,6 +367,7 @@ void PolymorphicCodeCache::PolymorphicCodeCacheVerify() {
 void TypeFeedbackInfo::TypeFeedbackInfoVerify() {
   VerifyObjectField(kStorage1Offset);
   VerifyObjectField(kStorage2Offset);
+  VerifyHeapPointer(type_feedback_cells());
 }
 
 
@@ -403,13 +403,6 @@ void FixedDoubleArray::FixedDoubleArrayVerify() {
 
 void ConstantPoolArray::ConstantPoolArrayVerify() {
   CHECK(IsConstantPoolArray());
-  for (int i = 0; i < count_of_code_ptr_entries(); i++) {
-    Address code_entry = get_code_ptr_entry(first_code_ptr_index() + i);
-    VerifyPointer(Code::GetCodeFromTargetAddress(code_entry));
-  }
-  for (int i = 0; i < count_of_heap_ptr_entries(); i++) {
-    VerifyObjectField(OffsetOfElementAt(first_heap_ptr_index() + i));
-  }
 }
 
 
@@ -497,6 +490,7 @@ void JSMessageObject::JSMessageObjectVerify() {
   VerifyObjectField(kEndPositionOffset);
   VerifyObjectField(kArgumentsOffset);
   VerifyObjectField(kScriptOffset);
+  VerifyObjectField(kStackTraceOffset);
   VerifyObjectField(kStackFramesOffset);
 }
 
@@ -551,7 +545,6 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
   VerifyObjectField(kNameOffset);
   VerifyObjectField(kCodeOffset);
   VerifyObjectField(kOptimizedCodeMapOffset);
-  VerifyObjectField(kFeedbackVectorOffset);
   VerifyObjectField(kScopeInfoOffset);
   VerifyObjectField(kInstanceClassNameOffset);
   VerifyObjectField(kFunctionDataOffset);
@@ -643,7 +636,7 @@ void Code::VerifyEmbeddedObjectsDependency() {
   int mode_mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
   for (RelocIterator it(this, mode_mask); !it.done(); it.next()) {
     Object* obj = it.rinfo()->target_object();
-    if (IsWeakObject(obj)) {
+    if (IsWeakEmbeddedObject(kind(), obj)) {
       if (obj->IsMap()) {
         Map* map = Map::cast(obj);
         CHECK(map->dependent_code()->Contains(
@@ -938,6 +931,7 @@ void Script::ScriptVerify() {
   VerifyPointer(name());
   line_offset()->SmiVerify();
   column_offset()->SmiVerify();
+  VerifyPointer(data());
   VerifyPointer(wrapper());
   type()->SmiVerify();
   VerifyPointer(line_ends());
@@ -1060,7 +1054,7 @@ void JSObject::IncrementSpillStatistics(SpillInformation* info) {
           dict->Capacity() - dict->NumberOfElements();
       break;
     }
-    case SLOPPY_ARGUMENTS_ELEMENTS:
+    case NON_STRICT_ARGUMENTS_ELEMENTS:
       break;
   }
 }

@@ -47,12 +47,16 @@ class HValue;
 class BitVector;
 class StringStream;
 
+class LArgument;
 class LPlatformChunk;
 class LOperand;
 class LUnallocated;
+class LConstantOperand;
 class LGap;
 class LParallelMove;
 class LPointerMap;
+class LStackSlot;
+class LRegister;
 
 
 // This class represents a single point of a LOperand's lifetime.

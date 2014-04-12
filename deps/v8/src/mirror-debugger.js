@@ -889,12 +889,9 @@ FunctionMirror.prototype.script = function() {
   // Return script if function is resolved. Otherwise just fall through
   // to return undefined.
   if (this.resolved()) {
-    if (this.script_) {
-      return this.script_;
-    }
     var script = %FunctionGetScript(this.value_);
     if (script) {
-      return this.script_ = MakeMirror(script);
+      return MakeMirror(script);
     }
   }
 };
@@ -920,11 +917,9 @@ FunctionMirror.prototype.sourcePosition_ = function() {
  * @return {Location or undefined} in-script location for the function begin
  */
 FunctionMirror.prototype.sourceLocation = function() {
-  if (this.resolved()) {
-    var script = this.script();
-    if (script) {
-      return script.locationFromPosition(this.sourcePosition_(), true);
-    }
+  if (this.resolved() && this.script()) {
+    return this.script().locationFromPosition(this.sourcePosition_(),
+                                              true);
   }
 };
 
@@ -954,10 +949,7 @@ FunctionMirror.prototype.constructedBy = function(opt_max_instances) {
 
 FunctionMirror.prototype.scopeCount = function() {
   if (this.resolved()) {
-    if (IS_UNDEFINED(this.scopeCount_)) {
-      this.scopeCount_ = %GetFunctionScopeCount(this.value());
-    }
-    return this.scopeCount_;
+    return %GetFunctionScopeCount(this.value());
   } else {
     return 0;
   }
@@ -1514,10 +1506,7 @@ FrameDetails.prototype.returnValue = function() {
 
 
 FrameDetails.prototype.scopeCount = function() {
-  if (IS_UNDEFINED(this.scopeCount_)) {
-    this.scopeCount_ = %GetScopeCount(this.break_id_, this.frameId());
-  }
-  return this.scopeCount_;
+  return %GetScopeCount(this.break_id_, this.frameId());
 };
 
 
@@ -1549,10 +1538,6 @@ FrameMirror.prototype.index = function() {
 
 
 FrameMirror.prototype.func = function() {
-  if (this.func_) {
-    return this.func_;
-  }
-
   // Get the function for this frame from the VM.
   var f = this.details_.func();
 
@@ -1560,7 +1545,7 @@ FrameMirror.prototype.func = function() {
   // value returned from the VM might be a string if the function for the
   // frame is unresolved.
   if (IS_FUNCTION(f)) {
-    return this.func_ = MakeMirror(f);
+    return MakeMirror(f);
   } else {
     return new UnresolvedFunctionMirror(f);
   }
@@ -1643,36 +1628,39 @@ FrameMirror.prototype.sourcePosition = function() {
 
 
 FrameMirror.prototype.sourceLocation = function() {
-  var func = this.func();
-  if (func.resolved()) {
-    var script = func.script();
-    if (script) {
-      return script.locationFromPosition(this.sourcePosition(), true);
-    }
+  if (this.func().resolved() && this.func().script()) {
+    return this.func().script().locationFromPosition(this.sourcePosition(),
+                                                     true);
   }
 };
 
 
 FrameMirror.prototype.sourceLine = function() {
-  var location = this.sourceLocation();
-  if (location) {
-    return location.line;
+  if (this.func().resolved()) {
+    var location = this.sourceLocation();
+    if (location) {
+      return location.line;
+    }
   }
 };
 
 
 FrameMirror.prototype.sourceColumn = function() {
-  var location = this.sourceLocation();
-  if (location) {
-    return location.column;
+  if (this.func().resolved()) {
+    var location = this.sourceLocation();
+    if (location) {
+      return location.column;
+    }
   }
 };
 
 
 FrameMirror.prototype.sourceLineText = function() {
-  var location = this.sourceLocation();
-  if (location) {
-    return location.sourceText();
+  if (this.func().resolved()) {
+    var location = this.sourceLocation();
+    if (location) {
+      return location.sourceText();
+    }
   }
 };
 
@@ -1684,18 +1672,6 @@ FrameMirror.prototype.scopeCount = function() {
 
 FrameMirror.prototype.scope = function(index) {
   return new ScopeMirror(this, UNDEFINED, index);
-};
-
-
-FrameMirror.prototype.allScopes = function() {
-  var scopeDetails = %GetAllScopesDetails(this.break_id_,
-                                          this.details_.frameId(),
-                                          this.details_.inlinedFrameIndex());
-  var result = [];
-  for (var i = 0; i < scopeDetails.length; ++i) {
-    result.push(new ScopeMirror(this, UNDEFINED, i, scopeDetails[i]));
-  }
-  return result;
 };
 
 
@@ -1817,10 +1793,9 @@ FrameMirror.prototype.sourceAndPositionText = function() {
   var result = '';
   var func = this.func();
   if (func.resolved()) {
-    var script = func.script();
-    if (script) {
-      if (script.name()) {
-        result += script.name();
+    if (func.script()) {
+      if (func.script().name()) {
+        result += func.script().name();
       } else {
         result += '[unnamed]';
       }
@@ -1890,18 +1865,17 @@ FrameMirror.prototype.toText = function(opt_locals) {
 var kScopeDetailsTypeIndex = 0;
 var kScopeDetailsObjectIndex = 1;
 
-function ScopeDetails(frame, fun, index, opt_details) {
+function ScopeDetails(frame, fun, index) {
   if (frame) {
     this.break_id_ = frame.break_id_;
-    this.details_ = opt_details ||
-                    %GetScopeDetails(frame.break_id_,
+    this.details_ = %GetScopeDetails(frame.break_id_,
                                      frame.details_.frameId(),
                                      frame.details_.inlinedFrameIndex(),
                                      index);
     this.frame_id_ = frame.details_.frameId();
     this.inlined_frame_id_ = frame.details_.inlinedFrameIndex();
   } else {
-    this.details_ = opt_details || %GetFunctionScopeDetails(fun.value(), index);
+    this.details_ = %GetFunctionScopeDetails(fun.value(), index);
     this.fun_value_ = fun.value();
     this.break_id_ = undefined;
   }
@@ -1947,11 +1921,10 @@ ScopeDetails.prototype.setVariableValueImpl = function(name, new_value) {
  * @param {FrameMirror} frame The frame this scope is a part of
  * @param {FunctionMirror} function The function this scope is a part of
  * @param {number} index The scope index in the frame
- * @param {Array=} opt_details Raw scope details data
  * @constructor
  * @extends Mirror
  */
-function ScopeMirror(frame, function, index, opt_details) {
+function ScopeMirror(frame, function, index) {
   %_CallFunction(this, SCOPE_TYPE, Mirror);
   if (frame) {
     this.frame_index_ = frame.index_;
@@ -1959,7 +1932,7 @@ function ScopeMirror(frame, function, index, opt_details) {
     this.frame_index_ = undefined;
   }
   this.scope_index_ = index;
-  this.details_ = new ScopeDetails(frame, function, index, opt_details);
+  this.details_ = new ScopeDetails(frame, function, index);
 }
 inherits(ScopeMirror, Mirror);
 
@@ -2602,9 +2575,8 @@ JSONProtocolSerializer.prototype.serializeFrame_ = function(mirror, content) {
   content.receiver = this.serializeReference(mirror.receiver());
   var func = mirror.func();
   content.func = this.serializeReference(func);
-  var script = func.script();
-  if (script) {
-    content.script = this.serializeReference(script);
+  if (func.script()) {
+    content.script = this.serializeReference(func.script());
   }
   content.constructCall = mirror.isConstructCall();
   content.atReturn = mirror.isAtReturn();

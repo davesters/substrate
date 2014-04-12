@@ -101,7 +101,7 @@ namespace internal {
   V(KeyedLoadField)
 
 // List of code stubs only used on ARM platforms.
-#if defined(V8_TARGET_ARCH_ARM) || defined(V8_TARGET_ARCH_A64)
+#if V8_TARGET_ARCH_ARM
 #define CODE_STUB_LIST_ARM(V)  \
   V(GetProperty)               \
   V(SetProperty)               \
@@ -187,6 +187,9 @@ class CodeStub BASE_EMBEDDED {
   }
   virtual Code::StubType GetStubType() {
     return Code::NORMAL;
+  }
+  virtual int GetStubFlags() {
+    return -1;
   }
 
   virtual void PrintName(StringStream* stream);
@@ -439,8 +442,6 @@ class RuntimeCallHelper {
 #include "ia32/code-stubs-ia32.h"
 #elif V8_TARGET_ARCH_X64
 #include "x64/code-stubs-x64.h"
-#elif V8_TARGET_ARCH_A64
-#include "a64/code-stubs-a64.h"
 #elif V8_TARGET_ARCH_ARM
 #include "arm/code-stubs-arm.h"
 #elif V8_TARGET_ARCH_MIPS
@@ -486,13 +487,6 @@ class ToNumberStub: public HydrogenCodeStub {
       Isolate* isolate,
       CodeStubInterfaceDescriptor* descriptor);
 
-  static void InstallDescriptors(Isolate* isolate) {
-    ToNumberStub stub;
-    stub.InitializeInterfaceDescriptor(
-        isolate,
-        isolate->code_stub_interface_descriptor(CodeStub::ToNumber));
-  }
-
  private:
   Major MajorKey() { return ToNumber; }
   int NotMissMinorKey() { return 0; }
@@ -522,8 +516,8 @@ class NumberToStringStub V8_FINAL : public HydrogenCodeStub {
 
 class FastNewClosureStub : public HydrogenCodeStub {
  public:
-  explicit FastNewClosureStub(StrictMode strict_mode, bool is_generator)
-    : strict_mode_(strict_mode),
+  explicit FastNewClosureStub(LanguageMode language_mode, bool is_generator)
+    : language_mode_(language_mode),
       is_generator_(is_generator) { }
 
   virtual Handle<Code> GenerateCode(Isolate* isolate);
@@ -534,7 +528,7 @@ class FastNewClosureStub : public HydrogenCodeStub {
 
   static void InstallDescriptors(Isolate* isolate);
 
-  StrictMode strict_mode() const { return strict_mode_; }
+  LanguageMode language_mode() const { return language_mode_; }
   bool is_generator() const { return is_generator_; }
 
  private:
@@ -543,11 +537,11 @@ class FastNewClosureStub : public HydrogenCodeStub {
 
   Major MajorKey() { return FastNewClosure; }
   int NotMissMinorKey() {
-    return StrictModeBits::encode(strict_mode_ == STRICT) |
+    return StrictModeBits::encode(language_mode_ != CLASSIC_MODE) |
       IsGeneratorBits::encode(is_generator_);
   }
 
-  StrictMode strict_mode_;
+  LanguageMode language_mode_;
   bool is_generator_;
 };
 
@@ -631,8 +625,6 @@ class FastCloneShallowArrayStub : public HydrogenCodeStub {
       Isolate* isolate,
       CodeStubInterfaceDescriptor* descriptor);
 
-  static void InstallDescriptors(Isolate* isolate);
-
  private:
   Mode mode_;
   AllocationSiteMode allocation_site_mode_;
@@ -659,7 +651,8 @@ class FastCloneShallowObjectStub : public HydrogenCodeStub {
   // Maximum number of properties in copied object.
   static const int kMaximumClonedProperties = 6;
 
-  explicit FastCloneShallowObjectStub(int length) : length_(length) {
+  explicit FastCloneShallowObjectStub(int length)
+      : length_(length) {
     ASSERT_GE(length_, 0);
     ASSERT_LE(length_, kMaximumClonedProperties);
   }
@@ -846,7 +839,7 @@ class StringLengthStub: public ICStub {
 
 class StoreICStub: public ICStub {
  public:
-  StoreICStub(Code::Kind kind, StrictMode strict_mode)
+  StoreICStub(Code::Kind kind, StrictModeFlag strict_mode)
       : ICStub(kind), strict_mode_(strict_mode) { }
 
  protected:
@@ -861,13 +854,13 @@ class StoreICStub: public ICStub {
     return KindBits::encode(kind()) | StrictModeBits::encode(strict_mode_);
   }
 
-  StrictMode strict_mode_;
+  StrictModeFlag strict_mode_;
 };
 
 
 class StoreArrayLengthStub: public StoreICStub {
  public:
-  explicit StoreArrayLengthStub(Code::Kind kind, StrictMode strict_mode)
+  explicit StoreArrayLengthStub(Code::Kind kind, StrictModeFlag strict_mode)
       : StoreICStub(kind, strict_mode) { }
   virtual void Generate(MacroAssembler* masm);
 
@@ -890,7 +883,7 @@ class HICStub: public HydrogenCodeStub {
 class HandlerStub: public HICStub {
  public:
   virtual Code::Kind GetCodeKind() const { return Code::HANDLER; }
-  virtual ExtraICState GetExtraICState() { return kind(); }
+  virtual int GetStubFlags() { return kind(); }
 
  protected:
   HandlerStub() : HICStub() { }
@@ -944,10 +937,11 @@ class LoadFieldStub: public HandlerStub {
                   bool inobject,
                   int index,
                   Representation representation) {
+    bool unboxed_double = FLAG_track_double_fields && representation.IsDouble();
     bit_field_ = KindBits::encode(kind)
         | InobjectBits::encode(inobject)
         | IndexBits::encode(index)
-        | UnboxedDoubleBits::encode(representation.IsDouble());
+        | UnboxedDoubleBits::encode(unboxed_double);
   }
 
  private:
@@ -961,27 +955,19 @@ class LoadFieldStub: public HandlerStub {
 
 class StoreGlobalStub : public HandlerStub {
  public:
-  explicit StoreGlobalStub(bool is_constant, bool check_global) {
-    bit_field_ = IsConstantBits::encode(is_constant) |
-        CheckGlobalBits::encode(check_global);
-  }
-
-  static Handle<HeapObject> global_placeholder(Isolate* isolate) {
-    return isolate->factory()->uninitialized_value();
+  explicit StoreGlobalStub(bool is_constant) {
+    bit_field_ = IsConstantBits::encode(is_constant);
   }
 
   Handle<Code> GetCodeCopyFromTemplate(Isolate* isolate,
-                                       GlobalObject* global,
+                                       Map* receiver_map,
                                        PropertyCell* cell) {
     Handle<Code> code = CodeStub::GetCodeCopyFromTemplate(isolate);
-    if (check_global()) {
-      // Replace the placeholder cell and global object map with the actual
-      // global cell and receiver map.
-      code->ReplaceNthObject(1, global_placeholder(isolate)->map(), global);
-      code->ReplaceNthObject(1, isolate->heap()->meta_map(), global->map());
-    }
+    // Replace the placeholder cell and global object map with the actual global
+    // cell and receiver map.
     Map* cell_map = isolate->heap()->global_property_cell_map();
     code->ReplaceNthObject(1, cell_map, cell);
+    code->ReplaceNthObject(1, isolate->heap()->meta_map(), receiver_map);
     return code;
   }
 
@@ -993,11 +979,10 @@ class StoreGlobalStub : public HandlerStub {
       Isolate* isolate,
       CodeStubInterfaceDescriptor* descriptor);
 
-  bool is_constant() const {
+  virtual ExtraICState GetExtraICState() { return bit_field_; }
+
+  bool is_constant() {
     return IsConstantBits::decode(bit_field_);
-  }
-  bool check_global() const {
-    return CheckGlobalBits::decode(bit_field_);
   }
   void set_is_constant(bool value) {
     bit_field_ = IsConstantBits::update(bit_field_, value);
@@ -1011,11 +996,13 @@ class StoreGlobalStub : public HandlerStub {
   }
 
  private:
+  virtual int NotMissMinorKey() { return GetExtraICState(); }
   Major MajorKey() { return StoreGlobal; }
 
   class IsConstantBits: public BitField<bool, 0, 1> {};
   class RepresentationBits: public BitField<Representation::Kind, 1, 8> {};
-  class CheckGlobalBits: public BitField<bool, 9, 1> {};
+
+  int bit_field_;
 
   DISALLOW_COPY_AND_ASSIGN(StoreGlobalStub);
 };
@@ -1023,14 +1010,13 @@ class StoreGlobalStub : public HandlerStub {
 
 class CallApiFunctionStub : public PlatformCodeStub {
  public:
-  CallApiFunctionStub(bool is_store,
+  CallApiFunctionStub(bool restore_context,
                       bool call_data_undefined,
                       int argc) {
     bit_field_ =
-        IsStoreBits::encode(is_store) |
+        RestoreContextBits::encode(restore_context) |
         CallDataUndefinedBits::encode(call_data_undefined) |
         ArgumentBits::encode(argc);
-    ASSERT(!is_store || argc == 1);
   }
 
  private:
@@ -1038,7 +1024,7 @@ class CallApiFunctionStub : public PlatformCodeStub {
   virtual Major MajorKey() V8_OVERRIDE { return CallApiFunction; }
   virtual int MinorKey() V8_OVERRIDE { return bit_field_; }
 
-  class IsStoreBits: public BitField<bool, 0, 1> {};
+  class RestoreContextBits: public BitField<bool, 0, 1> {};
   class CallDataUndefinedBits: public BitField<bool, 1, 1> {};
   class ArgumentBits: public BitField<int, 2, Code::kArgumentsBits> {};
 
@@ -1382,7 +1368,7 @@ class CompareNilICStub : public HydrogenCodeStub  {
       Isolate* isolate,
       CodeStubInterfaceDescriptor* descriptor);
 
-  static void InstallDescriptors(Isolate* isolate) {
+  static void InitializeForIsolate(Isolate* isolate) {
     CompareNilICStub compare_stub(kNullValue, UNINITIALIZED);
     compare_stub.InitializeInterfaceDescriptor(
         isolate,
@@ -1534,8 +1520,8 @@ class ArgumentsAccessStub: public PlatformCodeStub {
  public:
   enum Type {
     READ_ELEMENT,
-    NEW_SLOPPY_FAST,
-    NEW_SLOPPY_SLOW,
+    NEW_NON_STRICT_FAST,
+    NEW_NON_STRICT_SLOW,
     NEW_STRICT
   };
 
@@ -1550,8 +1536,8 @@ class ArgumentsAccessStub: public PlatformCodeStub {
   void Generate(MacroAssembler* masm);
   void GenerateReadElement(MacroAssembler* masm);
   void GenerateNewStrict(MacroAssembler* masm);
-  void GenerateNewSloppyFast(MacroAssembler* masm);
-  void GenerateNewSloppySlow(MacroAssembler* masm);
+  void GenerateNewNonStrictFast(MacroAssembler* masm);
+  void GenerateNewNonStrictSlow(MacroAssembler* masm);
 
   virtual void PrintName(StringStream* stream);
 };
@@ -1880,21 +1866,23 @@ class DoubleToIStub : public PlatformCodeStub {
                 int offset,
                 bool is_truncating,
                 bool skip_fastpath = false) : bit_field_(0) {
-    bit_field_ = SourceRegisterBits::encode(source.code()) |
-      DestinationRegisterBits::encode(destination.code()) |
+    bit_field_ = SourceRegisterBits::encode(source.code_) |
+      DestinationRegisterBits::encode(destination.code_) |
       OffsetBits::encode(offset) |
       IsTruncatingBits::encode(is_truncating) |
       SkipFastPathBits::encode(skip_fastpath) |
       SSEBits::encode(CpuFeatures::IsSafeForSnapshot(SSE2) ?
-                      CpuFeatures::IsSafeForSnapshot(SSE3) ? 2 : 1 : 0);
+                          CpuFeatures::IsSafeForSnapshot(SSE3) ? 2 : 1 : 0);
   }
 
   Register source() {
-    return Register::from_code(SourceRegisterBits::decode(bit_field_));
+    Register result = { SourceRegisterBits::decode(bit_field_) };
+    return result;
   }
 
   Register destination() {
-    return Register::from_code(DestinationRegisterBits::decode(bit_field_));
+    Register result = { DestinationRegisterBits::decode(bit_field_) };
+    return result;
   }
 
   bool is_truncating() {
@@ -2339,7 +2327,7 @@ class ToBooleanStub: public HydrogenCodeStub {
 
   virtual bool SometimesSetsUpAFrame() { return false; }
 
-  static void InstallDescriptors(Isolate* isolate) {
+  static void InitializeForIsolate(Isolate* isolate) {
     ToBooleanStub stub;
     stub.InitializeInterfaceDescriptor(
         isolate,
