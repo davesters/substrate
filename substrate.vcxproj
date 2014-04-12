@@ -114,21 +114,21 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>src;deps\v8\include;deps\gtk\include;deps\gtk\include\gtk-3.0;deps\gtk\include\pango-1.0;deps\gtk\include\atk-1.0;deps\gtk\include\cairo;deps\gtk\include\gdk-pixbuf-2.0;deps\gtk\include\glib-2.0;deps\gtk\Debug\lib\glib-2.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;deps\v8\include;deps\gtk\include;deps\gtk\include\gtk-3.0;deps\gtk\include\pango-1.0;deps\gtk\include\atk-1.0;deps\gtk\include\cairo;deps\gtk\include\gdk-pixbuf-2.0;deps\gtk\include\glib-2.0;deps\gtk\msw\Debug\lib\glib-2.0\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>deps\v8\Debug\lib;deps\gtk\msw\Debug\lib</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>deps\v8\build\Debug\lib;deps\gtk\msw\Debug\lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>v8_base.x64.lib;icuuc.lib;v8_snapshot.lib;icui18n.lib;ws2_32.lib;winmm.lib;gtk-win32-3.0.lib;gdk-win32-3.0.lib;glib-2.0.lib;gobject-2.0.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
     </Link>
     <PostBuildEvent>
-      <Command>xcopy /y "$(SolutionDir)deps\gtk\Release\*.dll" "$(OutDir)"</Command>
+      <Command>xcopy /y "$(SolutionDir)deps\gtk\msw\Release\*.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
