@@ -1,0 +1,12 @@
+*.suo
+*.sdf
+*.opensdf
+*.user
+build/
+
+deps/v8/build/Debug
+deps/v8/build/Release
+
+main.css
+main.ui
+main.js
