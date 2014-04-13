@@ -7,6 +7,9 @@
 
 class StEntry : StWidget
 {
+protected:
+	virtual void PopulateObjectHandle(Handle<ObjectTemplate> objTemplate);
+
 public:
 	StEntry(GtkWidget* widget, string id);
 	~StEntry();

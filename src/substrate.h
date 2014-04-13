@@ -1,6 +1,7 @@
 #include <v8.h>
 #include <gtk/gtk.h>
 #include <string>
+#include <widgets/st_widget.h>
 
 using namespace v8;
 using namespace std;

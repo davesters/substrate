@@ -11,8 +11,6 @@
 using namespace v8;
 using namespace std;
 
-static map<string, StWidget*> elements_;
-
 Ui::Ui()
 {
 }
@@ -32,15 +30,10 @@ void Ui::BuildWindow(GtkBuilder* builder, string name, string parent) {
 }
 
 StWidget* Ui::GetWidget(GtkWidget* widget, string id) {
-	//if (elements_[id]) {
-	//	return elements_[id];
-	//}
-
 	auto widgetType = string(gtk_widget_get_name(widget));
 
 	if (widgetType == "GtkButton") {
 		auto w = (StWidget*)(new StButton(widget, id));
-		//elements_[id] = w;
 		return w;
 	}
 	if (widgetType == "GtkLabel") {

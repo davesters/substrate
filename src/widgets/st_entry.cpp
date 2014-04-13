@@ -10,17 +10,10 @@ using namespace std;
 
 StEntry::StEntry(GtkWidget* widget, string id) : StWidget(widget, id)
 {
-	this->widget_ = widget;
+}
 
-	Handle<ObjectTemplate> entry_templ = ObjectTemplate::New(Environment::GetIsolate());
-	entry_templ->SetInternalFieldCount(1);
-
-	entry_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "id"), GetId, NULL);
-	entry_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "name"), GetName, NULL);
-	entry_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "text"), GetText, SetText);
-
-	objTemplate_ = entry_templ->NewInstance();
-	objTemplate_->SetInternalField(0, External::New(Environment::GetIsolate(), this));
+void StEntry::PopulateObjectHandle(Handle<ObjectTemplate> objTemplate) {
+	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "text"), GetText, SetText);
 }
 
 void StEntry::GetText(Local<String> property, const PropertyCallbackInfo<Value>& info) {

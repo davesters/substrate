@@ -1,6 +1,7 @@
 #include <v8.h>
 #include <gtk/gtk.h>
 #include <string>
+#include <memory>
 
 #include <substrate.h>
 #include <substrate_utils.h>
@@ -14,6 +15,7 @@ static Isolate* isolate_;
 static Persistent<Context> persistentContext;
 static GtkWidget* window;
 static GtkBuilder* builder;
+static Ui* ui;
 
 void Substrate::init(int argc, char* argv[])
 {
@@ -43,6 +45,7 @@ void Substrate::init(int argc, char* argv[])
 	gtk_init(&argc, &argv);
 
 	builder = gtk_builder_new();
+	ui = new Ui();
 
 	Handle<Value> initObj = context->Global()->Get(String::NewFromUtf8(isolate_, "on_app_ready"));
 	Handle<Function> initFunc = Handle<Function>::Cast(initObj);
@@ -111,10 +114,10 @@ void Substrate::loadWindowCallback(const FunctionCallbackInfo<Value>& args) {
 	}
 
 	if (mainWindow == "") {
-		window = Ui::BuildMainWindow(builder, windowName);
+		window = ui->BuildMainWindow(builder, windowName);
 	}
 	else {
-		Ui::BuildWindow(builder, windowName, mainWindow);
+		ui->BuildWindow(builder, windowName, mainWindow);
 	}
 }
 
@@ -141,7 +144,7 @@ void Substrate::getWidgetCallback(const FunctionCallbackInfo<Value>& args) {
 	string name(*String::Utf8Value(args[0]));
 
 	auto widget = (GtkWidget*)gtk_builder_get_object(builder, name.c_str());
-	auto uiWidget = Ui::GetWidget(widget, name);
+	auto uiWidget = ui->GetWidget(widget, name);
 
 	args.GetReturnValue().Set(uiWidget->GetObjectHandle().As<Value>());
 }
@@ -187,10 +190,11 @@ void Substrate::onEvent(GtkWidget *widget, gpointer data) {
 
 	if (callbackObj->IsFunction()) {
 		Handle<Function> callbackFunc = Handle<Function>::Cast(callbackObj);
-		auto uiWidget = Ui::GetWidget(widget, userData->objName);
+		auto uiWidget = ui->GetWidget(widget, userData->objName);
+		auto widgetHandle = uiWidget->GetObjectHandle().As<Value>();
 
 		TryCatch tryCatch;
-		auto result = callbackFunc->Call(context->Global(), 1, &uiWidget->GetObjectHandle().As<Value>());
+		auto result = callbackFunc->Call(context->Global(), 1, &widgetHandle);
 		if (result.IsEmpty()) {
 			SubstrateUtils::ShowV8Error(isolate_, window, tryCatch.Exception(), tryCatch.StackTrace());
 		}

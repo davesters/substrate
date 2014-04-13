@@ -2,7 +2,6 @@
 #include <v8.h>
 #include <gtk/gtk.h>
 #include <string>
-#include <map>
 
 #include <widgets/st_widget.h>
 
@@ -15,8 +14,8 @@ public:
 	Ui();
 	~Ui();
 
-	static GtkWidget* BuildMainWindow(GtkBuilder* builder, string name);
-	static void BuildWindow(GtkBuilder* builder, string name, string parent);
+	GtkWidget* BuildMainWindow(GtkBuilder* builder, string name);
+	void BuildWindow(GtkBuilder* builder, string name, string parent);
 
-	static StWidget* GetWidget(GtkWidget* widget, string id);
+	StWidget* GetWidget(GtkWidget* widget, string id);
 };

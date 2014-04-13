@@ -7,6 +7,9 @@
 
 class StLabel : StWidget
 {
+protected:
+	virtual void PopulateObjectHandle(Handle<ObjectTemplate> objTemplate);
+
 public:
 	StLabel(GtkWidget* widget, string id);
 	~StLabel();

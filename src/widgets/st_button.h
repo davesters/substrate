@@ -10,6 +10,9 @@ using namespace std;
 
 class StButton : StWidget
 {
+protected:
+	virtual void PopulateObjectHandle(Handle<ObjectTemplate> objTemplate);
+
 public:
 	StButton(GtkWidget* widget, string id);
 	~StButton();

@@ -10,17 +10,10 @@ using namespace std;
 
 StLabel::StLabel(GtkWidget* widget, string id) : StWidget(widget, id)
 {
-	this->widget_ = widget;
+}
 
-	Handle<ObjectTemplate> label_templ = ObjectTemplate::New(Environment::GetIsolate());
-	label_templ->SetInternalFieldCount(1);
-
-	label_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "id"), GetId, NULL);
-	label_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "name"), GetName, NULL);
-	label_templ->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "label"), GetLabel, SetLabel);
-
-	objTemplate_ = label_templ->NewInstance();
-	objTemplate_->SetInternalField(0, External::New(Environment::GetIsolate(), this));
+void StLabel::PopulateObjectHandle(Handle<ObjectTemplate> objTemplate) {
+	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "label"), GetLabel, SetLabel);
 }
 
 void StLabel::GetLabel(Local<String> property, const PropertyCallbackInfo<Value>& info) {
