@@ -182,6 +182,7 @@
     <ClCompile Include="src\widgets\st_entry.cpp" />
     <ClCompile Include="src\widgets\st_label.cpp" />
     <ClCompile Include="src\widgets\st_widget.cpp" />
+    <ClCompile Include="src\widgets\st_window.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\environment.h" />
@@ -192,12 +193,13 @@
     <ClInclude Include="src\widgets\st_entry.h" />
     <ClInclude Include="src\widgets\st_label.h" />
     <ClInclude Include="src\widgets\st_widget.h" />
+    <ClInclude Include="src\widgets\st_window.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="main.css">
       <DeploymentContent>true</DeploymentContent>
     </None>
-    <None Include="main.ui">
+    <None Include="calc.ui">
       <DeploymentContent>true</DeploymentContent>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -205,6 +207,7 @@
       <DeploymentContent>true</DeploymentContent>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="main.ui" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

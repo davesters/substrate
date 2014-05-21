@@ -10,12 +10,11 @@ using namespace std;
 
 class StButton : StWidget
 {
-protected:
-	virtual void PopulateObjectHandle(Handle<ObjectTemplate> objTemplate);
-
 public:
-	StButton(GtkWidget* widget, string id);
+	StButton();
 	~StButton();
+
+	static void PopulateObjectHandle(Local<ObjectTemplate> objTemplate);
 
 	static void GetLabel(Local<String> property, const PropertyCallbackInfo<Value>& info);
 	static void SetLabel(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void>& info);

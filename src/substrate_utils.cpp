@@ -49,22 +49,3 @@ string SubstrateUtils::readFile(const string& name) {
 
 	return result;
 }
-
-void SubstrateUtils::ShowV8Error(Isolate* isolate, GtkWidget* window, Local<Value> exception, Local<Value> stackTrace) {
-	auto exception_str = String::Concat(exception->ToString(), String::NewFromUtf8(isolate, "; Stack: "));
-	exception_str = String::Concat(exception_str, stackTrace->ToString());
-
-	ShowMessageDialog(window, *String::Utf8Value(exception_str));
-}
-
-void SubstrateUtils::ShowMessageDialog(GtkWidget* window, char* message) {
-	auto dialog = gtk_message_dialog_new(
-		(GtkWindow*)window,
-		GTK_DIALOG_DESTROY_WITH_PARENT,
-		GTK_MESSAGE_INFO,
-		GTK_BUTTONS_OK,
-		message);
-
-	gtk_dialog_run(GTK_DIALOG(dialog));
-	gtk_widget_destroy(dialog);
-}

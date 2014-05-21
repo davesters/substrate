@@ -8,32 +8,35 @@
 using namespace v8;
 using namespace std;
 
-StButton::StButton(GtkWidget* widget, string id) : StWidget(widget, id)
+StButton::StButton()
 {
 }
 
-void StButton::PopulateObjectHandle(Handle<ObjectTemplate> objTemplate) {
+void StButton::PopulateObjectHandle(Local<ObjectTemplate> objTemplate) {
+	StWidget::PopulateObjectHandle(objTemplate);
+
 	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "label"), GetLabel, SetLabel);
 }
 
 void StButton::GetLabel(Local<String> property, const PropertyCallbackInfo<Value>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	auto widget = wrap->Value();
+	auto widget = static_cast<GtkButton*>(wrap->Value());
 
-	auto gtkWidget = static_cast<StButton*>(widget)->widget_;
-	info.GetReturnValue().Set(String::NewFromUtf8(Environment::GetIsolate(), gtk_button_get_label((GtkButton*)gtkWidget)));
+	info.GetReturnValue().Set(String::NewFromUtf8(info.GetIsolate(), gtk_button_get_label(widget)));
 }
 
 void StButton::SetLabel(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	void* widget = wrap->Value();
+	auto widget = static_cast<GtkButton*>(wrap->Value());
+	String::Utf8Value labelVal(value);
 
-	string labelVal(*String::Utf8Value(value));
-	auto gtkWidget = static_cast<StButton*>(widget)->widget_;
-
-	gtk_button_set_label((GtkButton*)gtkWidget, labelVal.c_str());
+	gtk_button_set_label(widget, *labelVal);
 }
 
 StButton::~StButton()

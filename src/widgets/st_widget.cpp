@@ -8,59 +8,35 @@
 using namespace v8;
 using namespace std;
 
-StWidget::StWidget(GtkWidget* widget, string id)
+StWidget::StWidget()
 {
-	this->id_ = id;
-	this->widget_ = widget;
-	this->name_ = gtk_widget_get_name(widget);
 }
 
-Local<Object> StWidget::GetObjectHandle() {
-	if (*this->objTemplate_ == NULL) {
-		this->CreateObjectTemplate();
-	}
-
-	return this->objTemplate_;
-}
-
-void StWidget::CreateObjectTemplate() {
-	auto objTemplate = ObjectTemplate::New(Environment::GetIsolate());
-	objTemplate->SetInternalFieldCount(1);
-
+void StWidget::PopulateObjectHandle(Local<ObjectTemplate> objTemplate) {
 	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "id"), GetId, NULL);
 	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "name"), GetName, NULL);
-	this->PopulateObjectHandle(objTemplate);
-
-	this->objTemplate_ = objTemplate->NewInstance();
-	this->objTemplate_->SetInternalField(0, External::New(Environment::GetIsolate(), this));
-
-	Persistent<Object> persistent_value(Environment::GetIsolate(), objTemplate_);
-	persistent_value.SetWeak(this->widget_, WeakCallback);
 }
 
 void StWidget::GetName(Local<String> property, const PropertyCallbackInfo<Value>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	void* widget = wrap->Value();
+	auto widget = static_cast<GtkWidget*>(wrap->Value());
 
-	string nameVal = static_cast<StWidget*>(widget)->name_;
-	info.GetReturnValue().Set(String::NewFromUtf8(Environment::GetIsolate(), nameVal.c_str()));
+	auto nameVal = gtk_widget_get_name(widget);
+	info.GetReturnValue().Set(String::NewFromUtf8(info.GetIsolate(), nameVal));
 }
 
 void StWidget::GetId(Local<String> property, const PropertyCallbackInfo<Value>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	void* widget = wrap->Value();
+	auto widget = static_cast<GtkBuildable*>(wrap->Value());
 
-	string nameVal = static_cast<StWidget*>(widget)->id_;
-	info.GetReturnValue().Set(String::NewFromUtf8(Environment::GetIsolate(), nameVal.c_str()));
-}
-
-void StWidget::WeakCallback(const WeakCallbackData<Object, GtkWidget>& data) {
-	auto obj_ptr = data.GetParameter();
-
-	delete obj_ptr;
-	data.GetValue().Clear();
+	auto nameVal = gtk_buildable_get_name(widget);
+	info.GetReturnValue().Set(String::NewFromUtf8(info.GetIsolate(), nameVal));
 }
 
 StWidget::~StWidget()

@@ -12,10 +12,6 @@ using namespace v8;
 using namespace std;
 
 static Isolate* isolate_;
-static Persistent<Context> persistentContext;
-static GtkWidget* window;
-static GtkBuilder* builder;
-static Ui* ui;
 
 void Substrate::init(int argc, char* argv[])
 {
@@ -24,8 +20,7 @@ void Substrate::init(int argc, char* argv[])
 	HandleScope handle_scope(isolate_);
 
 	Handle<Context> context = Context::New(isolate_, NULL, CreateGlobalObject());
-	persistentContext.Reset(isolate_, context);
-
+	Ui::SetContext(context);
 	Context::Scope context_scope(context);
 
 	Handle<String> source = SubstrateUtils::readJsFile(isolate_, "main.js");
@@ -33,19 +28,16 @@ void Substrate::init(int argc, char* argv[])
 
 	Handle<Script> script = Script::Compile(source);
 	if (script.IsEmpty()) {
-		SubstrateUtils::ShowV8Error(isolate_, window, tryCatch.Exception(), tryCatch.StackTrace());
+		Ui::ShowV8Error(isolate_, tryCatch.Exception(), tryCatch.StackTrace());
 	}
 
 	tryCatch.Reset();
 	Handle<Value> result = script->Run();
 	if (result.IsEmpty()) {
-		SubstrateUtils::ShowV8Error(isolate_, window, tryCatch.Exception(), tryCatch.StackTrace());
+		Ui::ShowV8Error(isolate_, tryCatch.Exception(), tryCatch.StackTrace());
 	}
 
 	gtk_init(&argc, &argv);
-
-	builder = gtk_builder_new();
-	ui = new Ui();
 
 	Handle<Value> initObj = context->Global()->Get(String::NewFromUtf8(isolate_, "on_app_ready"));
 	Handle<Function> initFunc = Handle<Function>::Cast(initObj);
@@ -53,7 +45,7 @@ void Substrate::init(int argc, char* argv[])
 	tryCatch.Reset();
 	result = initFunc->Call(context->Global(), 0, NULL);
 	if (result.IsEmpty()) {
-		SubstrateUtils::ShowV8Error(isolate_, window, tryCatch.Exception(), tryCatch.StackTrace());
+		Ui::ShowV8Error(isolate_, tryCatch.Exception(), tryCatch.StackTrace());
 	}
 
 	gtk_main();
@@ -61,7 +53,7 @@ void Substrate::init(int argc, char* argv[])
 
 Handle<ObjectTemplate> Substrate::CreateGlobalObject() {
 	auto global = ObjectTemplate::New(isolate_);
-	global->Set(String::NewFromUtf8(isolate_, "_s"), CreateSubstrateObject());
+	global->Set(String::NewFromUtf8(isolate_, "substrate"), CreateSubstrateObject());
 
 	return global;
 }
@@ -71,11 +63,10 @@ Handle<ObjectTemplate> Substrate::CreateSubstrateObject() {
 
 	substrateObj->SetInternalFieldCount(1);
 	substrateObj->Set(String::NewFromUtf8(isolate_, "alert"), FunctionTemplate::New(isolate_, alertCallback));
-	substrateObj->Set(String::NewFromUtf8(isolate_, "bind_event"), FunctionTemplate::New(isolate_, bindEventCallback));
 	substrateObj->Set(String::NewFromUtf8(isolate_, "exit"), FunctionTemplate::New(isolate_, exitCallback));
-	substrateObj->Set(String::NewFromUtf8(isolate_, "load_window"), FunctionTemplate::New(isolate_, loadWindowCallback));
-	substrateObj->Set(String::NewFromUtf8(isolate_, "load_styles"), FunctionTemplate::New(isolate_, loadStylesCallback));
-	substrateObj->Set(String::NewFromUtf8(isolate_, "get_widget"), FunctionTemplate::New(isolate_, getWidgetCallback));
+	substrateObj->Set(String::NewFromUtf8(isolate_, "loadMainWindow"), FunctionTemplate::New(isolate_, loadMainWindowCallback));
+	substrateObj->Set(String::NewFromUtf8(isolate_, "loadWindow"), FunctionTemplate::New(isolate_, loadWindowCallback));
+	substrateObj->Set(String::NewFromUtf8(isolate_, "loadStyles"), FunctionTemplate::New(isolate_, loadStylesCallback));
 
 	return substrateObj;
 }
@@ -85,7 +76,7 @@ void Substrate::alertCallback(const FunctionCallbackInfo<Value>& args) {
 		return;
 	}
 
-	HandleScope scope(args.GetIsolate());
+	HandleScope handle_scope(args.GetIsolate());
 	Handle<Value> title;
 
 	if (args.Length() > 1) {
@@ -98,7 +89,19 @@ void Substrate::alertCallback(const FunctionCallbackInfo<Value>& args) {
 	String::Utf8Value msgValue(args[0]);
 	String::Utf8Value titleValue(title);
 
-	SubstrateUtils::ShowMessageDialog(window, *msgValue);
+	Ui::ShowMessageDialog(*msgValue);
+}
+
+void Substrate::loadMainWindowCallback(const FunctionCallbackInfo<Value>& args) {
+	if (args.Length() < 1) {
+		return;
+	}
+
+	HandleScope handle_scope(args.GetIsolate());
+	string windowName(*String::Utf8Value(args[0]));
+	auto windowObj = Ui::LoadMainWindow(windowName);
+
+	args.GetReturnValue().Set(windowObj);
 }
 
 void Substrate::loadWindowCallback(const FunctionCallbackInfo<Value>& args) {
@@ -106,22 +109,16 @@ void Substrate::loadWindowCallback(const FunctionCallbackInfo<Value>& args) {
 		return;
 	}
 
+	HandleScope handle_scope(args.GetIsolate());
 	string windowName(*String::Utf8Value(args[0]));
-	string mainWindow("");
+	auto windowObj = Ui::LoadWindow(windowName);
 
-	if (args.Length() > 1) {
-		mainWindow = *String::Utf8Value(args[1]);
-	}
-
-	if (mainWindow == "") {
-		window = ui->BuildMainWindow(builder, windowName);
-	}
-	else {
-		ui->BuildWindow(builder, windowName, mainWindow);
-	}
+	args.GetReturnValue().Set(windowObj);
 }
 
 void Substrate::loadStylesCallback(const FunctionCallbackInfo<Value>& args) {
+	HandleScope handle_scope(args.GetIsolate());
+
 	if (args.Length() < 1) {
 		return;
 	}
@@ -137,66 +134,6 @@ void Substrate::loadStylesCallback(const FunctionCallbackInfo<Value>& args) {
 	g_object_unref(cssProvider);
 }
 
-void Substrate::getWidgetCallback(const FunctionCallbackInfo<Value>& args) {
-	if (args.Length() < 1) {
-		return;
-	}
-	string name(*String::Utf8Value(args[0]));
-
-	auto widget = (GtkWidget*)gtk_builder_get_object(builder, name.c_str());
-	auto uiWidget = ui->GetWidget(widget, name);
-
-	args.GetReturnValue().Set(uiWidget->GetObjectHandle().As<Value>());
-}
-
-void Substrate::bindEventCallback(const FunctionCallbackInfo<Value>& args) {
-	if (args.Length() < 3) {
-		return;
-	}
-
-	HandleScope handle_scope(args.GetIsolate());
-	String::Utf8Value objName(args[0]);
-	String::Utf8Value eventType(args[1]);
-
-	string eventCheck(*String::Utf8Value(args[1]));
-	string callbackName(*String::Utf8Value(args[2]));
-
-	UserData* userData = new UserData;
-	userData->callbackName = callbackName;
-	userData->objName = *objName;
-
-	if (eventCheck == "clicked") {
-		GObject* obj = gtk_builder_get_object(builder, *objName);
-		g_signal_connect(obj, *eventType, G_CALLBACK(onEvent), userData);
-	}
-
-	args.GetReturnValue().Set(userData);
-}
-
 void Substrate::exitCallback(const FunctionCallbackInfo<Value>& args) {
-	gtk_widget_destroy(window);
 	gtk_main_quit();
-}
-
-void Substrate::onEvent(GtkWidget *widget, gpointer data) {
-	HandleScope handle_scope(isolate_);
-	Local<Context> context = Local<Context>::New(isolate_, persistentContext);
-	Context::Scope context_scope(context);
-
-	UserData *userData = (UserData*)data;
-
-	Handle<Value> callback = String::NewFromUtf8(isolate_, userData->callbackName.c_str());
-	Handle<Value> callbackObj = context->Global()->Get(callback);
-
-	if (callbackObj->IsFunction()) {
-		Handle<Function> callbackFunc = Handle<Function>::Cast(callbackObj);
-		auto uiWidget = ui->GetWidget(widget, userData->objName);
-		auto widgetHandle = uiWidget->GetObjectHandle().As<Value>();
-
-		TryCatch tryCatch;
-		auto result = callbackFunc->Call(context->Global(), 1, &widgetHandle);
-		if (result.IsEmpty()) {
-			SubstrateUtils::ShowV8Error(isolate_, window, tryCatch.Exception(), tryCatch.StackTrace());
-		}
-	}
 }

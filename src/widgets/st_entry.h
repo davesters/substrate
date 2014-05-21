@@ -7,12 +7,11 @@
 
 class StEntry : StWidget
 {
-protected:
-	virtual void PopulateObjectHandle(Handle<ObjectTemplate> objTemplate);
-
 public:
-	StEntry(GtkWidget* widget, string id);
+	StEntry();
 	~StEntry();
+
+	static void PopulateObjectHandle(Local<ObjectTemplate> objTemplate);
 
 	static void GetText(Local<String> property, const PropertyCallbackInfo<Value>& info);
 	static void SetText(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void>& info);

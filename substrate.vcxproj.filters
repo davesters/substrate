@@ -48,6 +48,9 @@
     <ClCompile Include="src\environment.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\widgets\st_window.cpp">
+      <Filter>Source Files\widgets</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ui.h">
@@ -74,15 +77,21 @@
     <ClInclude Include="src\widgets\st_entry.h">
       <Filter>Header Files\widgets</Filter>
     </ClInclude>
+    <ClInclude Include="src\widgets\st_window.h">
+      <Filter>Header Files\widgets</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="main.js">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="main.ui">
+    <None Include="main.css">
       <Filter>Resource Files</Filter>
     </None>
-    <None Include="main.css">
+    <None Include="calc.ui">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="main.ui">
       <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>

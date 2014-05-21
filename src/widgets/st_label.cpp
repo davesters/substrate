@@ -8,32 +8,35 @@
 using namespace v8;
 using namespace std;
 
-StLabel::StLabel(GtkWidget* widget, string id) : StWidget(widget, id)
+StLabel::StLabel()
 {
 }
 
-void StLabel::PopulateObjectHandle(Handle<ObjectTemplate> objTemplate) {
+void StLabel::PopulateObjectHandle(Local<ObjectTemplate> objTemplate) {
+	StWidget::PopulateObjectHandle(objTemplate);
+
 	objTemplate->SetAccessor(String::NewFromUtf8(Environment::GetIsolate(), "label"), GetLabel, SetLabel);
 }
 
 void StLabel::GetLabel(Local<String> property, const PropertyCallbackInfo<Value>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	void* widget = wrap->Value();
+	auto widget = static_cast<GtkLabel*>(wrap->Value());
 
-	auto gtkWidget = static_cast<StLabel*>(widget)->widget_;
-	info.GetReturnValue().Set(String::NewFromUtf8(Environment::GetIsolate(), gtk_label_get_label((GtkLabel*)gtkWidget)));
+	info.GetReturnValue().Set(String::NewFromUtf8(info.GetIsolate(), gtk_label_get_label(widget)));
 }
 
 void StLabel::SetLabel(Local<String> property, Local<Value> value, const PropertyCallbackInfo<void>& info) {
+	HandleScope scope(info.GetIsolate());
+
 	Local<Object> self = info.Holder();
 	Local<External> wrap = Local<External>::Cast(self->GetInternalField(0));
-	void* widget = wrap->Value();
+	auto widget = static_cast<GtkLabel*>(wrap->Value());
+	String::Utf8Value labelVal(value);
 
-	string labelVal(*String::Utf8Value(value));
-	auto gtkWidget = static_cast<StLabel*>(widget)->widget_;
-
-	gtk_label_set_label((GtkLabel*)gtkWidget, labelVal.c_str());
+	gtk_label_set_label(widget, *labelVal);
 }
 
 StLabel::~StLabel()

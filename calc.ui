@@ -1,0 +1,208 @@
+<interface>
+    <object id="calc" class="GtkWindow">
+        <property name="visible">True</property>
+        <property name="title">Calculator</property>
+        <property name="resizable">False</property>
+        <child>
+            <object id="grid" class="GtkGrid">
+                <property name="visible">True</property>
+                <property name="row-spacing">6</property>
+                <property name="column-spacing">6</property>
+                <property name="border-width">8</property>
+                <child>
+                    <object id="clear_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">C</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">0</property>
+                        <property name="top-attach">0</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="text_entry" class="GtkEntry">
+                        <property name="visible">True</property>
+                        <property name="placeholder-text">0</property>
+                        <property name="text-length">13</property>
+                        <property name="xalign">1</property>
+                        <property name="editable">False</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">1</property>
+                        <property name="top-attach">0</property>
+                        <property name="width">3</property>
+                    </packing>
+                </child>
+
+                <child>
+                    <object id="seven_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">7</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">0</property>
+                        <property name="top-attach">1</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="eight_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">8</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">1</property>
+                        <property name="top-attach">1</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="nine_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">9</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">2</property>
+                        <property name="top-attach">1</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="divide_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">/</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">3</property>
+                        <property name="top-attach">1</property>
+                    </packing>
+                </child>
+
+                
+                <child>
+                    <object id="four_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">4</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">0</property>
+                        <property name="top-attach">2</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="five_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">5</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">1</property>
+                        <property name="top-attach">2</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="six_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">6</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">2</property>
+                        <property name="top-attach">2</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="mult_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">*</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">3</property>
+                        <property name="top-attach">2</property>
+                    </packing>
+                </child>
+
+
+                <child>
+                    <object id="one_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">1</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">0</property>
+                        <property name="top-attach">3</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="two_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">2</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">1</property>
+                        <property name="top-attach">3</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="three_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">3</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">2</property>
+                        <property name="top-attach">3</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="subtract_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">-</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">3</property>
+                        <property name="top-attach">3</property>
+                    </packing>
+                </child>
+
+
+                <child>
+                    <object id="zero_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">0</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">0</property>
+                        <property name="top-attach">4</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="decimal_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">.</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">1</property>
+                        <property name="top-attach">4</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="add_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">+</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">2</property>
+                        <property name="top-attach">4</property>
+                    </packing>
+                </child>
+                <child>
+                    <object id="equals_btn" class="GtkButton">
+                        <property name="visible">True</property>
+                        <property name="label">=</property>
+                    </object>
+                    <packing>
+                        <property name="left-attach">3</property>
+                        <property name="top-attach">4</property>
+                    </packing>
+                </child>
+            </object>
+            <packing>
+            </packing>
+        </child>
+    </object>
+</interface>
